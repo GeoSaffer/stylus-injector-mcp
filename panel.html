@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stylus Injector — Control Panel</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1b26;
+    --surface-hover: #22243a;
+    --border: #2a2d3e;
+    --text: #c9d1d9;
+    --text-muted: #7a8194;
+    --accent: #8b5cf6;
+    --accent-hover: #a78bfa;
+    --green: #34d399;
+    --red: #f87171;
+    --orange: #fbbf24;
+    --mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    --radius: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px 20px 48px;
+  }
+
+  /* ---- Header ---- */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+  .header-icon {
+    width: 36px; height: 36px;
+    background: var(--accent);
+    border-radius: var(--radius);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+  }
+  .header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #fff;
+    letter-spacing: -0.3px;
+  }
+  .header .subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ---- Status bar ---- */
+  .status-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    flex-shrink: 0;
+    box-shadow: 0 0 6px var(--green);
+  }
+  .status-dot.off { background: var(--text-muted); box-shadow: none; }
+  .status-target {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent-hover);
+    word-break: break-all;
+  }
+  .status-port {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  /* ---- Cards ---- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+  }
+
+  /* ---- Theme section ---- */
+  .theme-current {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: var(--bg);
+    border-radius: 6px;
+  }
+  .theme-name {
+    font-weight: 500;
+    color: #fff;
+  }
+  .theme-name.none { color: var(--text-muted); font-style: italic; }
+
+  .scan-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .theme-list {
+    max-height: 200px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .theme-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--bg);
+    transition: background 0.15s;
+    cursor: pointer;
+  }
+  .theme-item:hover { background: var(--surface-hover); }
+  .theme-item .name { font-size: 13px; }
+  .theme-item .meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+  .theme-item.active {
+    border-left: 3px solid var(--accent);
+    background: var(--surface-hover);
+  }
+
+  /* ---- CSS editor ---- */
+  .css-editor {
+    width: 100%;
+    min-height: 120px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 12px;
+    resize: vertical;
+    line-height: 1.5;
+    tab-size: 2;
+  }
+  .css-editor:focus { outline: none; border-color: var(--accent); }
+  .css-editor::placeholder { color: var(--text-muted); }
+
+  .inject-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  /* ---- Snippets ---- */
+  .snippet-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .snippet-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border-radius: 6px;
+  }
+  .snippet-id {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent-hover);
+    flex-shrink: 0;
+  }
+  .snippet-preview {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .snippet-len {
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .empty-state {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 16px;
+    font-style: italic;
+  }
+
+  /* ---- Buttons ---- */
+  button, .btn {
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover { color: var(--text); border-color: var(--text-muted); }
+  .btn-danger {
+    background: transparent;
+    color: var(--red);
+    border: 1px solid rgba(248,113,113,0.3);
+  }
+  .btn-danger:hover { background: rgba(248,113,113,0.1); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ---- Inputs ---- */
+  input[type="text"] {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 7px 12px;
+    flex: 1;
+    min-width: 0;
+  }
+  input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--text-muted); }
+
+  /* ---- Toast ---- */
+  .toast-container {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .toast {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 13px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    animation: slide-in 0.2s ease-out;
+    max-width: 340px;
+  }
+  .toast.error { border-color: var(--red); color: var(--red); }
+  .toast.success { border-color: var(--green); color: var(--green); }
+  @keyframes slide-in {
+    from { transform: translateX(20px); opacity: 0; }
+    to   { transform: translateX(0); opacity: 1; }
+  }
+
+  /* ---- Footer ---- */
+  .footer {
+    margin-top: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .footer-link {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ---- Scrollbar ---- */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">S</div>
+    <div>
+      <h1>Stylus Injector</h1>
+      <div class="subtitle">Control Panel</div>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div class="status-bar" id="statusBar">
+    <div class="status-dot" id="statusDot"></div>
+    <span class="status-target" id="statusTarget">—</span>
+    <span class="status-port" id="statusPort">:9988</span>
+  </div>
+
+  <!-- Theme management -->
+  <div class="card">
+    <div class="card-title">Theme</div>
+    <div class="theme-current">
+      <span class="theme-name none" id="themeName">No theme loaded</span>
+      <button class="btn-ghost btn-sm" id="clearThemeBtn" disabled>Clear</button>
+    </div>
+    <div class="scan-row">
+      <input type="text" id="scanDir" placeholder="Directory path to scan for .user.css files">
+      <button class="btn-primary" id="scanBtn">Scan</button>
+    </div>
+    <div class="theme-list" id="themeList">
+      <div class="empty-state">Scan a directory to discover themes</div>
+    </div>
+  </div>
+
+  <!-- CSS injection -->
+  <div class="card">
+    <div class="card-title">Inject CSS</div>
+    <textarea class="css-editor" id="cssEditor" placeholder="body {&#10;  background: #1a1b26 !important;&#10;}" spellcheck="false"></textarea>
+    <div class="inject-row">
+      <input type="text" id="snippetId" placeholder="Snippet ID (optional)">
+      <button class="btn-primary" id="injectBtn">Inject</button>
+    </div>
+  </div>
+
+  <!-- Active snippets -->
+  <div class="card">
+    <div class="card-title">Active Snippets</div>
+    <div class="snippet-list" id="snippetList">
+      <div class="empty-state">No ad-hoc snippets active</div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <span class="footer-link">Navigate to <strong>/</strong> to view the proxied site</span>
+    <button class="btn-danger btn-sm" id="stopBtn">Stop Proxy</button>
+  </div>
+
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<script>
+const API = "/__api__";
+
+function toast(msg, type = "success") {
+  const el = document.createElement("div");
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById("toasts").appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+async function api(method, endpoint, body) {
+  try {
+    const opts = { method, headers: {} };
+    if (body) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(`${API}${endpoint}`, opts);
+    const data = await res.json();
+    if (data.error) { toast(data.error, "error"); return null; }
+    return data;
+  } catch (e) {
+    toast(e.message, "error");
+    return null;
+  }
+}
+
+// ---- Status polling ----
+
+async function refreshStatus() {
+  const data = await api("GET", "/status");
+  if (!data) return;
+
+  document.getElementById("statusDot").className = "status-dot";
+  document.getElementById("statusTarget").textContent = data.target || "—";
+  document.getElementById("statusPort").textContent = `:${data.port}`;
+
+  const nameEl = document.getElementById("themeName");
+  const clearBtn = document.getElementById("clearThemeBtn");
+  if (data.theme.name) {
+    nameEl.textContent = data.theme.name;
+    nameEl.className = "theme-name";
+    clearBtn.disabled = false;
+  } else {
+    nameEl.textContent = "No theme loaded";
+    nameEl.className = "theme-name none";
+    clearBtn.disabled = true;
+  }
+
+  renderSnippets(data.snippets);
+}
+
+function renderSnippets(snippets) {
+  const list = document.getElementById("snippetList");
+  if (!snippets || snippets.length === 0) {
+    list.innerHTML = '<div class="empty-state">No ad-hoc snippets active</div>';
+    return;
+  }
+  list.innerHTML = snippets.map(s => `
+    <div class="snippet-item">
+      <span class="snippet-id">${esc(s.id)}</span>
+      <span class="snippet-preview">${esc(s.preview)}</span>
+      <span class="snippet-len">${s.length} chars</span>
+      <button class="btn-ghost btn-sm" onclick="removeSnippet('${esc(s.id)}')">Remove</button>
+    </div>
+  `).join("");
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ---- Theme scanning ----
+
+let themes = [];
+
+document.getElementById("scanBtn").addEventListener("click", async () => {
+  const dir = document.getElementById("scanDir").value.trim();
+  if (!dir) { toast("Enter a directory path", "error"); return; }
+  const data = await api("GET", `/list-userstyles?directory=${encodeURIComponent(dir)}`);
+  if (!data) return;
+  themes = data.files || [];
+  renderThemes();
+});
+
+function renderThemes() {
+  const list = document.getElementById("themeList");
+  if (themes.length === 0) {
+    list.innerHTML = '<div class="empty-state">No .user.css files found</div>';
+    return;
+  }
+  const current = document.getElementById("themeName").textContent;
+  list.innerHTML = themes.map(t => `
+    <div class="theme-item ${t.name === current ? 'active' : ''}" onclick="applyTheme('${esc(t.path.replace(/\\/g, "\\\\").replace(/'/g, "\\'"))}')">
+      <div>
+        <div class="name">${esc(t.name)}</div>
+        <div class="meta">${esc(t.file)}${t.version ? ` · v${esc(t.version)}` : ""}</div>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function applyTheme(filepath) {
+  const data = await api("POST", "/switch-theme", { userstyle: filepath });
+  if (data) {
+    toast(`Theme: ${data.name}`);
+    await refreshStatus();
+    renderThemes();
+  }
+}
+
+document.getElementById("clearThemeBtn").addEventListener("click", async () => {
+  const data = await api("POST", "/switch-theme", { userstyle: "" });
+  if (data) {
+    toast("Theme cleared");
+    await refreshStatus();
+    renderThemes();
+  }
+});
+
+// ---- CSS injection ----
+
+document.getElementById("injectBtn").addEventListener("click", async () => {
+  const css = document.getElementById("cssEditor").value.trim();
+  if (!css) { toast("Enter some CSS", "error"); return; }
+  const id = document.getElementById("snippetId").value.trim() || undefined;
+  const data = await api("POST", "/inject-css", { css, id });
+  if (data) {
+    toast(`Injected: ${data.id}`);
+    document.getElementById("cssEditor").value = "";
+    document.getElementById("snippetId").value = "";
+    await refreshStatus();
+  }
+});
+
+async function removeSnippet(id) {
+  const data = await api("POST", "/remove-snippet", { id });
+  if (data) {
+    toast(`Removed: ${id}`);
+    await refreshStatus();
+  }
+}
+
+// ---- Stop proxy ----
+
+document.getElementById("stopBtn").addEventListener("click", async () => {
+  if (!confirm("Stop the proxy? The control panel will become unreachable.")) return;
+  await api("POST", "/stop");
+  toast("Proxy stopped");
+  document.getElementById("statusDot").className = "status-dot off";
+});
+
+// ---- Keyboard shortcuts ----
+
+document.getElementById("cssEditor").addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    document.getElementById("injectBtn").click();
+  }
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const ta = e.target;
+    const start = ta.selectionStart;
+    ta.value = ta.value.slice(0, start) + "  " + ta.value.slice(ta.selectionEnd);
+    ta.selectionStart = ta.selectionEnd = start + 2;
+  }
+});
+
+document.getElementById("scanDir").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("scanBtn").click();
+});
+
+// ---- Init ----
+
+refreshStatus();
+setInterval(refreshStatus, 5000);
+</script>
+</body>
+</html>

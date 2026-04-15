@@ -1,0 +1,40 @@
+{
+  "name": "stylus-injector-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that runs a local reverse proxy, injecting Stylus .user.css themes into HTML responses for the Cursor embedded browser",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "stylus-injector-mcp": "index.js"
+  },
+  "files": [
+    "index.js",
+    "panel.html",
+    "setup.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node index.js",
+    "setup": "node setup.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "cursor",
+    "stylus",
+    "userstyle",
+    "css-injection",
+    "reverse-proxy",
+    "theme",
+    "cursor-ide"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  }
+}
