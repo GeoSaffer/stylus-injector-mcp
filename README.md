@@ -43,17 +43,29 @@ Cursor Browser  ──►  localhost:9988  ──►  https://any-site.com
 
 ## Control panel
 
-Once the proxy is running, open **`http://localhost:9988/__panel__`** for a visual control panel.
+The control panel is **always available** at `http://localhost:9988/__panel__` the moment Cursor connects to the MCP server — no need to call `start_proxy` first.
 
 | Section | What it does |
 |---------|-------------|
+| **Start Proxy** | Enter a target URL (and optional theme path) and click Start — shown when proxy is idle |
 | **Status** | Live target origin, port, active theme name (auto-refreshes every 5s) |
 | **Theme** | Scan any directory for `.user.css` files, click to apply, clear to remove |
 | **CSS Editor** | Write and inject ad-hoc CSS (Ctrl+Enter to submit), assign snippet IDs |
 | **Snippets** | View active snippets with previews, remove individually |
-| **Stop** | Shut down the proxy from the panel |
+| **Stop** | Return to idle state — panel stays available |
 
 The panel uses a REST API at `/__api__/*` on the same port. Every operation available via MCP tools is also available through the panel.
+
+> **Custom port:** set `STYLUS_PORT` in your mcp.json entry to use a port other than `9988`:
+> ```json
+> {
+>   "stylus-injector": {
+>     "command": "node",
+>     "args": ["/path/to/index.js"],
+>     "env": { "STYLUS_PORT": "9000" }
+>   }
+> }
+> ```
 
 ## Usage example
 

@@ -10,21 +10,44 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const panelHTML = fs.readFileSync(path.join(__dirname, "panel.html"), "utf8");
+
+// ---------------------------------------------------------------------------
+// Config — override port via STYLUS_PORT env var in mcp.json
+// ---------------------------------------------------------------------------
+
+const PORT = parseInt(process.env.STYLUS_PORT || "9988", 10);
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const panelHTML = fs.readFileSync(path.join(__dirname, "panel.html"), "utf8");
-
-let proxyServer = null;
-let proxyPort = 9988;
-let targetOrigin = null;
+let targetOrigin = null;   // null = panel-only mode; string = proxy active
+let hostPattern = null;
 let themeCSS = "";
 let themeName = "";
 let themeFile = "";
 const adhocSnippets = new Map();
 let snippetCounter = 0;
+
+function setTarget(origin) {
+  targetOrigin = origin || null;
+  hostPattern = targetOrigin
+    ? new RegExp(
+        `https?://${new URL(targetOrigin).host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+        "gi"
+      )
+    : null;
+}
+
+function resetState() {
+  themeCSS = "";
+  themeName = "";
+  themeFile = "";
+  adhocSnippets.clear();
+  snippetCounter = 0;
+}
 
 // ---------------------------------------------------------------------------
 // CSS parser  -- strips Stylus metadata, unwraps @-moz-document
@@ -67,147 +90,16 @@ function injectionBlock() {
 }
 
 // ---------------------------------------------------------------------------
-// Reverse proxy
+// Decompression
 // ---------------------------------------------------------------------------
 
 function decompress(stream, encoding) {
   switch ((encoding || "").toLowerCase()) {
-    case "gzip":
-      return stream.pipe(zlib.createGunzip());
-    case "br":
-      return stream.pipe(zlib.createBrotliDecompress());
-    case "deflate":
-      return stream.pipe(zlib.createInflate());
-    default:
-      return stream;
+    case "gzip":    return stream.pipe(zlib.createGunzip());
+    case "br":      return stream.pipe(zlib.createBrotliDecompress());
+    case "deflate": return stream.pipe(zlib.createInflate());
+    default:        return stream;
   }
-}
-
-function createProxy(target, port) {
-  const url = new URL(target);
-  const secure = url.protocol === "https:";
-  const doRequest = secure ? https.request : http.request;
-  const hostPattern = new RegExp(
-    `https?://${url.host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-    "gi"
-  );
-
-  return http.createServer((req, res) => {
-    // Serve control panel
-    if (req.url === "/__panel__" || req.url === "/__panel__/") {
-      res.writeHead(200, {
-        "Content-Type": "text/html; charset=utf-8",
-        "Content-Length": Buffer.byteLength(panelHTML),
-      });
-      res.end(panelHTML);
-      return;
-    }
-
-    // Handle API routes
-    if (req.url.startsWith("/__api__/")) {
-      handleAPI(req, res).catch((e) => {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: e.message }));
-      });
-      return;
-    }
-
-    const headers = { ...req.headers, host: url.host };
-
-    if (headers.referer) {
-      headers.referer = headers.referer.replace(
-        `http://localhost:${port}`,
-        url.origin
-      );
-    }
-    if (headers.origin && headers.origin.includes(`localhost:${port}`)) {
-      headers.origin = url.origin;
-    }
-
-    // Ask upstream for uncompressed so we can inject into HTML easily
-    delete headers["accept-encoding"];
-
-    const opts = {
-      hostname: url.hostname,
-      port: url.port || (secure ? 443 : 80),
-      path: req.url,
-      method: req.method,
-      headers,
-    };
-
-    const proxyReq = doRequest(opts, (proxyRes) => {
-      const ct = proxyRes.headers["content-type"] || "";
-      const hasCSS = !!(themeCSS || adhocSnippets.size > 0);
-
-      // Rewrite redirect Location back to localhost
-      if (proxyRes.headers.location) {
-        proxyRes.headers.location = proxyRes.headers.location.replace(
-          hostPattern,
-          `http://localhost:${port}`
-        );
-      }
-
-      // Strip headers that block local dev
-      delete proxyRes.headers["content-security-policy"];
-      delete proxyRes.headers["content-security-policy-report-only"];
-      delete proxyRes.headers["strict-transport-security"];
-      delete proxyRes.headers["x-frame-options"];
-
-      // Rewrite Set-Cookie domain/secure so cookies work on localhost
-      if (proxyRes.headers["set-cookie"]) {
-        const cookies = Array.isArray(proxyRes.headers["set-cookie"])
-          ? proxyRes.headers["set-cookie"]
-          : [proxyRes.headers["set-cookie"]];
-        proxyRes.headers["set-cookie"] = cookies.map((c) =>
-          c.replace(/;\s*domain=[^;]*/gi, "").replace(/;\s*secure/gi, "")
-        );
-      }
-
-      // HTML with CSS to inject → buffer, inject, forward
-      if (ct.includes("text/html") && hasCSS) {
-        const decoded = decompress(proxyRes, proxyRes.headers["content-encoding"]);
-        const chunks = [];
-
-        decoded.on("data", (c) => chunks.push(c));
-        decoded.on("end", () => {
-          let body = Buffer.concat(chunks).toString("utf8");
-          const tag = injectionBlock();
-
-          if (/<\/head>/i.test(body)) {
-            body = body.replace(/<\/head>/i, tag + "</head>");
-          } else if (/<\/body>/i.test(body)) {
-            body = body.replace(/<\/body>/i, tag + "</body>");
-          } else {
-            body += tag;
-          }
-
-          const hdrs = { ...proxyRes.headers };
-          delete hdrs["content-encoding"];
-          delete hdrs["content-length"];
-          delete hdrs["transfer-encoding"];
-          hdrs["content-length"] = Buffer.byteLength(body);
-
-          res.writeHead(proxyRes.statusCode, hdrs);
-          res.end(body);
-        });
-        decoded.on("error", (e) => {
-          res.writeHead(502);
-          res.end(`Decompression error: ${e.message}`);
-        });
-      } else {
-        // Non-HTML or no CSS → passthrough
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
-        proxyRes.pipe(res);
-      }
-    });
-
-    proxyReq.on("error", (e) => {
-      res.writeHead(502);
-      res.end(`Proxy error: ${e.message}`);
-    });
-
-    req.pipe(proxyReq);
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +117,95 @@ async function loadTheme(filepath) {
 }
 
 // ---------------------------------------------------------------------------
-// Control panel API  (served at /__panel__ and /__api__/*)
+// Proxy request handler
+// ---------------------------------------------------------------------------
+
+function proxyRequest(req, res) {
+  const url = new URL(targetOrigin);
+  const secure = url.protocol === "https:";
+  const doRequest = secure ? https.request : http.request;
+
+  const headers = { ...req.headers, host: url.host };
+  if (headers.referer) {
+    headers.referer = headers.referer.replace(`http://localhost:${PORT}`, url.origin);
+  }
+  if (headers.origin && headers.origin.includes(`localhost:${PORT}`)) {
+    headers.origin = url.origin;
+  }
+  delete headers["accept-encoding"];
+
+  const opts = {
+    hostname: url.hostname,
+    port: url.port || (secure ? 443 : 80),
+    path: req.url,
+    method: req.method,
+    headers,
+  };
+
+  const proxyReq = doRequest(opts, (proxyRes) => {
+    const ct = proxyRes.headers["content-type"] || "";
+    const hasCSS = !!(themeCSS || adhocSnippets.size > 0);
+
+    if (proxyRes.headers.location) {
+      proxyRes.headers.location = proxyRes.headers.location.replace(
+        hostPattern,
+        `http://localhost:${PORT}`
+      );
+    }
+
+    delete proxyRes.headers["content-security-policy"];
+    delete proxyRes.headers["content-security-policy-report-only"];
+    delete proxyRes.headers["strict-transport-security"];
+    delete proxyRes.headers["x-frame-options"];
+
+    if (proxyRes.headers["set-cookie"]) {
+      const cookies = Array.isArray(proxyRes.headers["set-cookie"])
+        ? proxyRes.headers["set-cookie"]
+        : [proxyRes.headers["set-cookie"]];
+      proxyRes.headers["set-cookie"] = cookies.map((c) =>
+        c.replace(/;\s*domain=[^;]*/gi, "").replace(/;\s*secure/gi, "")
+      );
+    }
+
+    if (ct.includes("text/html") && hasCSS) {
+      const decoded = decompress(proxyRes, proxyRes.headers["content-encoding"]);
+      const chunks = [];
+      decoded.on("data", (c) => chunks.push(c));
+      decoded.on("end", () => {
+        let body = Buffer.concat(chunks).toString("utf8");
+        const tag = injectionBlock();
+        if (/<\/head>/i.test(body)) body = body.replace(/<\/head>/i, tag + "</head>");
+        else if (/<\/body>/i.test(body)) body = body.replace(/<\/body>/i, tag + "</body>");
+        else body += tag;
+
+        const hdrs = { ...proxyRes.headers };
+        delete hdrs["content-encoding"];
+        delete hdrs["content-length"];
+        delete hdrs["transfer-encoding"];
+        hdrs["content-length"] = Buffer.byteLength(body);
+        res.writeHead(proxyRes.statusCode, hdrs);
+        res.end(body);
+      });
+      decoded.on("error", (e) => {
+        res.writeHead(502);
+        res.end(`Decompression error: ${e.message}`);
+      });
+    } else {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    }
+  });
+
+  proxyReq.on("error", (e) => {
+    res.writeHead(502);
+    res.end(`Proxy error: ${e.message}`);
+  });
+
+  req.pipe(proxyReq);
+}
+
+// ---------------------------------------------------------------------------
+// API handler  (served at /__api__/*)
 // ---------------------------------------------------------------------------
 
 async function readBody(req) {
@@ -244,14 +224,15 @@ function jsonResponse(res, status, data) {
 }
 
 async function handleAPI(req, res) {
-  const reqUrl = new URL(req.url, `http://localhost:${proxyPort}`);
+  const reqUrl = new URL(req.url, `http://localhost:${PORT}`);
   const route = reqUrl.pathname.replace("/__api__", "");
 
   try {
+    // GET /status
     if (req.method === "GET" && route === "/status") {
       return jsonResponse(res, 200, {
         target: targetOrigin,
-        port: proxyPort,
+        port: PORT,
         theme: { name: themeName || "", file: themeFile || "" },
         snippets: [...adhocSnippets.entries()].map(([id, css]) => ({
           id,
@@ -261,6 +242,21 @@ async function handleAPI(req, res) {
       });
     }
 
+    // POST /start-proxy
+    if (req.method === "POST" && route === "/start-proxy") {
+      const { target, userstyle } = await readBody(req);
+      if (!target) return jsonResponse(res, 400, { error: "Missing target URL" });
+      setTarget(target);
+      resetState();
+      let theme = "";
+      if (userstyle) {
+        const { name } = await loadTheme(userstyle);
+        theme = name;
+      }
+      return jsonResponse(res, 200, { target, theme, port: PORT });
+    }
+
+    // GET /list-userstyles
     if (req.method === "GET" && route === "/list-userstyles") {
       const directory = reqUrl.searchParams.get("directory");
       if (!directory) return jsonResponse(res, 400, { error: "Missing directory parameter" });
@@ -277,13 +273,7 @@ async function handleAPI(req, res) {
         try {
           const raw = await fs.promises.readFile(path.join(dir, file), "utf8");
           const meta = parseMetadata(raw);
-          files.push({
-            file,
-            path: path.join(dir, file),
-            name: meta.name || file,
-            version: meta.version || "",
-            description: meta.description || "",
-          });
+          files.push({ file, path: path.join(dir, file), name: meta.name || file, version: meta.version || "", description: meta.description || "" });
         } catch {
           files.push({ file, error: "Could not read file" });
         }
@@ -291,21 +281,19 @@ async function handleAPI(req, res) {
       return jsonResponse(res, 200, { files });
     }
 
+    // POST /switch-theme
     if (req.method === "POST" && route === "/switch-theme") {
       const { userstyle } = await readBody(req);
-      if (!userstyle && userstyle !== "") {
-        return jsonResponse(res, 400, { error: "Missing userstyle field" });
-      }
+      if (userstyle === undefined) return jsonResponse(res, 400, { error: "Missing userstyle field" });
       if (!userstyle) {
-        themeCSS = "";
-        themeName = "";
-        themeFile = "";
+        themeCSS = ""; themeName = ""; themeFile = "";
         return jsonResponse(res, 200, { name: "", message: "Theme cleared" });
       }
       const { name } = await loadTheme(userstyle);
       return jsonResponse(res, 200, { name, message: `Switched to ${name}` });
     }
 
+    // POST /inject-css
     if (req.method === "POST" && route === "/inject-css") {
       const { css, id } = await readBody(req);
       if (!css) return jsonResponse(res, 400, { error: "Missing css field" });
@@ -314,6 +302,7 @@ async function handleAPI(req, res) {
       return jsonResponse(res, 200, { id: sid, count: adhocSnippets.size });
     }
 
+    // POST /remove-snippet
     if (req.method === "POST" && route === "/remove-snippet") {
       const { id } = await readBody(req);
       if (!id) return jsonResponse(res, 400, { error: "Missing id field" });
@@ -321,26 +310,17 @@ async function handleAPI(req, res) {
       return jsonResponse(res, 200, { removed: id, count: adhocSnippets.size });
     }
 
+    // POST /clear-snippets
     if (req.method === "POST" && route === "/clear-snippets") {
       adhocSnippets.clear();
       return jsonResponse(res, 200, { message: "All snippets cleared" });
     }
 
+    // POST /stop
     if (req.method === "POST" && route === "/stop") {
-      const freedPort = proxyPort;
-      setTimeout(() => {
-        if (proxyServer) {
-          proxyServer.close();
-          proxyServer = null;
-          targetOrigin = null;
-          themeCSS = "";
-          themeName = "";
-          themeFile = "";
-          adhocSnippets.clear();
-          snippetCounter = 0;
-        }
-      }, 100);
-      return jsonResponse(res, 200, { message: `Proxy stopping on port ${freedPort}` });
+      setTarget(null);
+      resetState();
+      return jsonResponse(res, 200, { message: "Proxy stopped. Panel still available." });
     }
 
     jsonResponse(res, 404, { error: "Unknown API route" });
@@ -348,6 +328,55 @@ async function handleAPI(req, res) {
     jsonResponse(res, 500, { error: e.message });
   }
 }
+
+// ---------------------------------------------------------------------------
+// HTTP server — starts immediately when MCP server loads
+// Panel is always available at http://localhost:PORT/__panel__
+// ---------------------------------------------------------------------------
+
+const server = http.createServer((req, res) => {
+  // Serve control panel (always available)
+  if (req.url === "/__panel__" || req.url === "/__panel__/") {
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": Buffer.byteLength(panelHTML),
+    });
+    res.end(panelHTML);
+    return;
+  }
+
+  // API routes (always available)
+  if (req.url.startsWith("/__api__/")) {
+    handleAPI(req, res).catch((e) => jsonResponse(res, 500, { error: e.message }));
+    return;
+  }
+
+  // No target set — redirect to panel
+  if (!targetOrigin) {
+    res.writeHead(302, { Location: "/__panel__" });
+    res.end();
+    return;
+  }
+
+  // Proxy mode — forward to target
+  proxyRequest(req, res);
+});
+
+server.on("error", (e) => {
+  if (e.code === "EADDRINUSE") {
+    process.stderr.write(
+      `[stylus-injector] Port ${PORT} is already in use. Set STYLUS_PORT env var in mcp.json to use a different port.\n`
+    );
+  } else {
+    process.stderr.write(`[stylus-injector] Server error: ${e.message}\n`);
+  }
+});
+
+server.listen(PORT, () => {
+  process.stderr.write(
+    `[stylus-injector] Panel ready: http://localhost:${PORT}/__panel__\n`
+  );
+});
 
 // ---------------------------------------------------------------------------
 // MCP Server
@@ -362,37 +391,17 @@ const mcp = new McpServer({
 
 mcp.tool(
   "start_proxy",
-  "Start a local reverse proxy that injects Stylus theme CSS into every HTML response",
+  "Activate the reverse proxy — sets the target site and optionally loads a theme. The panel is always available at /__panel__ regardless.",
   {
     target: z.string().describe("Origin to proxy, e.g. https://example.com"),
     userstyle: z
       .string()
       .optional()
       .describe("Absolute or relative path to a .user.css file to inject"),
-    port: z
-      .number()
-      .optional()
-      .describe("Local port to listen on (default 9988)"),
   },
-  async ({ target, userstyle, port }) => {
-    if (proxyServer) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Error: proxy already running. Call stop_proxy first.",
-          },
-        ],
-      };
-    }
-
-    targetOrigin = target;
-    proxyPort = port || 9988;
-    themeCSS = "";
-    themeName = "";
-    themeFile = "";
-    adhocSnippets.clear();
-    snippetCounter = 0;
+  async ({ target, userstyle }) => {
+    setTarget(target);
+    resetState();
 
     let themeInfo = "";
     if (userstyle) {
@@ -400,37 +409,16 @@ mcp.tool(
         const { name } = await loadTheme(userstyle);
         themeInfo = `\nTheme: ${name}`;
       } catch (e) {
-        return {
-          content: [
-            { type: "text", text: `Error loading theme: ${e.message}` },
-          ],
-        };
+        return { content: [{ type: "text", text: `Error loading theme: ${e.message}` }] };
       }
     }
 
-    proxyServer = createProxy(targetOrigin, proxyPort);
-    try {
-      await new Promise((resolve, reject) => {
-        proxyServer.once("error", reject);
-        proxyServer.listen(proxyPort, () => resolve());
-      });
-    } catch (e) {
-      proxyServer = null;
-      return {
-        content: [
-          { type: "text", text: `Error starting proxy: ${e.message}` },
-        ],
-      };
-    }
-
-    const localUrl = `http://localhost:${proxyPort}`;
+    const localUrl = `http://localhost:${PORT}`;
     return {
-      content: [
-        {
-          type: "text",
-          text: `Proxy started: ${localUrl} → ${targetOrigin}${themeInfo}\n\nNavigate to ${localUrl} in the Cursor embedded browser.\nControl panel: ${localUrl}/__panel__`,
-        },
-      ],
+      content: [{
+        type: "text",
+        text: `Proxy active: ${localUrl} → ${target}${themeInfo}\n\nEmbedded browser: ${localUrl}\nControl panel:    ${localUrl}/__panel__`,
+      }],
     };
   }
 );
@@ -443,50 +431,18 @@ mcp.tool(
   {
     userstyle: z
       .string()
-      .describe(
-        'Path to a .user.css file, or empty string "" to remove the theme (passthrough)'
-      ),
+      .describe('Path to a .user.css file, or empty string "" to remove the theme'),
   },
   async ({ userstyle }) => {
-    if (!proxyServer) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Error: no proxy running. Call start_proxy first.",
-          },
-        ],
-      };
-    }
     if (!userstyle) {
-      themeCSS = "";
-      themeName = "";
-      themeFile = "";
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Theme removed. Proxy is now passthrough. Refresh the page.",
-          },
-        ],
-      };
+      themeCSS = ""; themeName = ""; themeFile = "";
+      return { content: [{ type: "text", text: "Theme removed. Refresh the page." }] };
     }
     try {
       const { name } = await loadTheme(userstyle);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Switched to theme: ${name}. Refresh the page to see changes.`,
-          },
-        ],
-      };
+      return { content: [{ type: "text", text: `Switched to theme: ${name}. Refresh the page.` }] };
     } catch (e) {
-      return {
-        content: [
-          { type: "text", text: `Error loading theme: ${e.message}` },
-        ],
-      };
+      return { content: [{ type: "text", text: `Error loading theme: ${e.message}` }] };
     }
   }
 );
@@ -504,25 +460,13 @@ mcp.tool(
       .describe("Snippet ID — reuse to replace a previous snippet"),
   },
   async ({ css, id }) => {
-    if (!proxyServer) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Error: no proxy running. Call start_proxy first.",
-          },
-        ],
-      };
-    }
     const sid = id || `adhoc-${++snippetCounter}`;
     adhocSnippets.set(sid, css);
     return {
-      content: [
-        {
-          type: "text",
-          text: `Injected snippet "${sid}" (${css.length} chars). ${adhocSnippets.size} active snippet(s). Refresh the page.`,
-        },
-      ],
+      content: [{
+        type: "text",
+        text: `Injected snippet "${sid}" (${css.length} chars). ${adhocSnippets.size} active snippet(s). Refresh the page.`,
+      }],
     };
   }
 );
@@ -543,37 +487,23 @@ mcp.tool(
     try {
       entries = await fs.promises.readdir(dir);
     } catch {
-      return {
-        content: [{ type: "text", text: `Cannot read directory: ${dir}` }],
-      };
+      return { content: [{ type: "text", text: `Cannot read directory: ${dir}` }] };
     }
     const files = entries.filter((f) => f.endsWith(".user.css"));
     if (files.length === 0) {
-      return {
-        content: [
-          { type: "text", text: `No .user.css files found in ${dir}` },
-        ],
-      };
+      return { content: [{ type: "text", text: `No .user.css files found in ${dir}` }] };
     }
     const results = [];
     for (const file of files) {
       try {
         const raw = await fs.promises.readFile(path.join(dir, file), "utf8");
         const meta = parseMetadata(raw);
-        results.push({
-          file,
-          path: path.join(dir, file),
-          name: meta.name || file,
-          version: meta.version || "",
-          description: meta.description || "",
-        });
+        results.push({ file, path: path.join(dir, file), name: meta.name || file, version: meta.version || "", description: meta.description || "" });
       } catch {
         results.push({ file, error: "Could not read file" });
       }
     }
-    return {
-      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-    };
+    return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
   }
 );
 
@@ -581,33 +511,22 @@ mcp.tool(
 
 mcp.tool(
   "stop_proxy",
-  "Shut down the reverse proxy and free the port",
+  "Deactivate the reverse proxy — clears the target and theme. The panel remains available at /__panel__.",
   {},
   async () => {
-    if (!proxyServer) {
-      return {
-        content: [{ type: "text", text: "No proxy is running." }],
-      };
-    }
-    await new Promise((resolve) => proxyServer.close(resolve));
-    const freedPort = proxyPort;
-    proxyServer = null;
-    targetOrigin = null;
-    themeCSS = "";
-    themeName = "";
-    themeFile = "";
-    adhocSnippets.clear();
-    snippetCounter = 0;
+    setTarget(null);
+    resetState();
     return {
-      content: [
-        { type: "text", text: `Proxy stopped. Port ${freedPort} freed.` },
-      ],
+      content: [{
+        type: "text",
+        text: `Proxy stopped. Panel still available at http://localhost:${PORT}/__panel__`,
+      }],
     };
   }
 );
 
 // ---------------------------------------------------------------------------
-// Start
+// Start MCP transport
 // ---------------------------------------------------------------------------
 
 const transport = new StdioServerTransport();
