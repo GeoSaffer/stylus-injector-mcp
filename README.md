@@ -13,7 +13,9 @@ npm install
 npm run setup
 ```
 
-`npm run setup` auto-registers the server in `~/.cursor/mcp.json` with the correct absolute path. Restart Cursor (or reload MCP servers) after setup.
+`npm run setup` auto-registers the server in `~/.cursor/mcp.json` with the correct absolute path.
+
+> **Important:** After installing Git or Node.js, and after running `npm run setup`, **fully quit and relaunch Cursor** — not just "Reload MCP servers". Cursor inherits its PATH at launch time, so it won't see newly installed tools until it restarts.
 
 ## How it works
 
