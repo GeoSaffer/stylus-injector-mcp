@@ -118,8 +118,24 @@ package.json   Dependencies: @modelcontextprotocol/sdk, zod
 
 ## Requirements
 
-- Node.js >= 18
-- Cursor IDE with embedded browser
+- **Node.js >= 18** — [download](https://nodejs.org) or install via command line:
+  ```bash
+  # Windows (winget)
+  winget install OpenJS.NodeJS.LTS
+
+  # Windows (choco)
+  choco install nodejs-lts
+
+  # macOS (Homebrew)
+  brew install node
+
+  # Linux (Debian/Ubuntu)
+  curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+  ```
+  Restart your terminal after installing, then verify with `node -v && npm -v`.
+
+- **Cursor IDE** with embedded browser
 
 ## License
 
