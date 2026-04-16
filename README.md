@@ -1,46 +1,80 @@
 # Stylus Injector MCP
 
-An MCP server that runs a local reverse proxy, injecting processed Stylus `.user.css` themes into HTML responses. Built for the **Cursor embedded browser** so that design controls (element picker, CSS inspector, agent-aware change detection) remain fully functional while previewing themed pages.
+An MCP server that runs a local reverse proxy, injecting Stylus `.user.css` themes into HTML responses. Built for the **Cursor embedded browser** — design controls (element picker, CSS inspector, agent-aware change detection) stay fully functional while previewing themed pages.
 
-Works with **any website** — the target origin is supplied at runtime, not hardcoded.
+Works with **any website**. The target origin is supplied at runtime, nothing is hardcoded.
 
 ## Quick start
 
 ```bash
-git clone <repo-url> stylus-injector-mcp
+git clone https://github.com/GeoSaffer/stylus-injector-mcp.git
 cd stylus-injector-mcp
 npm install
-npm run setup      # auto-registers in Cursor's ~/.cursor/mcp.json
+npm run setup
 ```
 
-Restart Cursor (or reload MCP servers) after setup.
+`npm run setup` auto-registers the server in `~/.cursor/mcp.json` with the correct absolute path. Restart Cursor (or reload MCP servers) after setup.
 
 ## How it works
 
 ```
-Cursor Browser  →  localhost:9988  →  https://any-target-site.com
-                   (reverse proxy)
-                   injects <style> into HTML responses
+Cursor Browser  ──►  localhost:9988  ──►  https://any-site.com
+                     (reverse proxy)
+                     injects <style> into every HTML response
 ```
 
-1. `start_proxy` launches a local HTTP server (default `:9988`) forwarding to any origin you specify.
-2. Non-HTML responses (JS, images, fonts, API calls) pass through untouched.
-3. HTML responses are intercepted — the proxy injects `<style>` tags containing the processed theme CSS before `</head>`.
-4. Navigate the Cursor embedded browser to `http://localhost:9988` to see the themed page with full design controls.
+1. The agent (or you via the control panel) calls `start_proxy` with a target origin.
+2. A local HTTP server starts on `:9988` and forwards all requests to the target.
+3. Non-HTML responses (JS, images, fonts, API calls) pass through untouched.
+4. HTML responses are intercepted — processed theme CSS is injected before `</head>`.
+5. Navigate the Cursor embedded browser to `http://localhost:9988` to see the themed page.
 
-## Tools
+## MCP tools
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `start_proxy` | `target` (required), `userstyle` (optional), `port` (optional, default 9988) | Start the reverse proxy, optionally loading a `.user.css` theme |
-| `switch_theme` | `userstyle` (required, `""` to clear) | Hot-swap the active theme without restarting |
+| `start_proxy` | `target` (required), `userstyle` (optional), `port` (optional, default `9988`) | Start the reverse proxy, optionally loading a `.user.css` theme |
+| `switch_theme` | `userstyle` (required, `""` to clear) | Hot-swap the active theme without restarting the proxy |
 | `inject_css` | `css` (required), `id` (optional) | Append ad-hoc CSS on top of the current theme |
 | `list_userstyles` | `directory` (required) | Scan a directory for `.user.css` files and return metadata |
 | `stop_proxy` | — | Shut down the proxy and free the port |
 
+## Control panel
+
+Once the proxy is running, open **`http://localhost:9988/__panel__`** for a visual control panel.
+
+| Section | What it does |
+|---------|-------------|
+| **Status** | Live target origin, port, active theme name (auto-refreshes every 5s) |
+| **Theme** | Scan any directory for `.user.css` files, click to apply, clear to remove |
+| **CSS Editor** | Write and inject ad-hoc CSS (Ctrl+Enter to submit), assign snippet IDs |
+| **Snippets** | View active snippets with previews, remove individually |
+| **Stop** | Shut down the proxy from the panel |
+
+The panel uses a REST API at `/__api__/*` on the same port. Every operation available via MCP tools is also available through the panel.
+
+## Usage example
+
+```
+1. start_proxy({ target: "https://example.com", userstyle: "C:/themes/dark.user.css" })
+   → Proxy started: http://localhost:9988 → https://example.com
+     Control panel: http://localhost:9988/__panel__
+
+2. Navigate Cursor browser to http://localhost:9988
+
+3. switch_theme({ userstyle: "C:/themes/blue.user.css" })
+   → Switched to theme: Blue Theme. Refresh the page.
+
+4. inject_css({ css: "body { background: #0f0f17 !important; }", id: "debug" })
+   → Injected snippet "debug". Refresh the page.
+
+5. stop_proxy()
+   → Proxy stopped. Port 9988 freed.
+```
+
 ## Manual registration
 
-If you prefer not to use `npm run setup`, add this to `~/.cursor/mcp.json`:
+If you prefer not to use `npm run setup`, merge this into `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -53,52 +87,34 @@ If you prefer not to use `npm run setup`, add this to `~/.cursor/mcp.json`:
 }
 ```
 
-Replace `/full/path/to/` with wherever you cloned the repo.
-
-## Usage example
-
-```
-1. start_proxy({ target: "https://example.com", userstyle: "/path/to/theme.user.css" })
-   → Proxy started: http://localhost:9988 → https://example.com
-
-2. Navigate Cursor browser to http://localhost:9988
-
-3. switch_theme({ userstyle: "/path/to/other-theme.user.css" })
-   → Switched to theme: Other Theme. Refresh the page.
-
-4. inject_css({ css: "body { background: red !important; }", id: "debug" })
-   → Injected snippet "debug". Refresh the page.
-
-5. stop_proxy()
-   → Proxy stopped. Port 9988 freed.
-```
-
-## Control panel
-
-Once the proxy is running, open `http://localhost:9988/__panel__` for a visual control panel.
-
-The panel provides:
-- **Live status** — target origin, port, active theme (auto-refreshes every 5 seconds)
-- **Theme switcher** — scan any directory for `.user.css` files, click to apply, clear to remove
-- **CSS editor** — write and inject ad-hoc CSS with Ctrl+Enter, assign snippet IDs for later replacement
-- **Snippet manager** — view all active snippets with previews, remove individually
-
-The panel communicates with the proxy via a REST API at `/__api__/*` (same port, no CORS issues). All operations from the MCP tools are also available through the panel.
+Replace the path with wherever you cloned the repo.
 
 ## CSS parsing
 
 The parser handles standard Stylus `.user.css` format:
+
 - Strips `==UserStyle==` metadata blocks
 - Unwraps `@-moz-document` wrappers
 - Outputs raw CSS rules ready for injection
 
 ## Proxy behaviour
 
-- **Header rewriting** — `Host`, `Referer`, `Origin` rewritten for target compatibility
-- **Redirect rewriting** — `Location` headers rewritten back to `localhost`
-- **Cookie rewriting** — `domain` and `secure` attributes stripped so cookies work on localhost
-- **Security headers** — CSP, HSTS, X-Frame-Options removed for local dev
-- **Decompression** — gzip/brotli/deflate handled transparently
+| Feature | Detail |
+|---------|--------|
+| **Header rewriting** | `Host`, `Referer`, `Origin` rewritten to match the target |
+| **Redirect rewriting** | `Location` headers rewritten back to `localhost` |
+| **Cookie rewriting** | `domain` and `secure` attributes stripped for localhost |
+| **Security headers** | CSP, HSTS, X-Frame-Options removed for local dev |
+| **Decompression** | gzip / brotli / deflate handled transparently |
+
+## Project structure
+
+```
+index.js       MCP server + reverse proxy + API routes
+panel.html     Visual control panel (served at /__panel__)
+setup.js       Auto-registers in ~/.cursor/mcp.json
+package.json   Dependencies: @modelcontextprotocol/sdk, zod
+```
 
 ## Requirements
 
