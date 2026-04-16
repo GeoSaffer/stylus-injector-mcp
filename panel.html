@@ -357,7 +357,8 @@
       Enter a target URL. The proxy will forward all requests to that site and inject your Stylus themes into every HTML response.
     </p>
     <div style="display:flex;flex-direction:column;gap:10px;">
-      <input type="text" id="startTarget" placeholder="https://example.com" style="font-size:14px;padding:10px 14px;">
+      <input type="text" id="startTarget" placeholder="https://example.com" style="font-size:14px;padding:10px 14px;" list="targetHistory" autocomplete="off">
+      <datalist id="targetHistory"></datalist>
       <input type="text" id="startTheme" placeholder="Theme path (optional)  —  /path/to/theme.user.css">
       <div style="display:flex;gap:8px;align-items:center;">
         <button class="btn-primary" id="startBtn" style="padding:9px 20px;font-size:14px;">Start Proxy</button>
@@ -412,6 +413,27 @@
 
 <script>
 const API = "/__api__";
+
+// ---- Persistence (localStorage) ----
+
+const LS = {
+  get: (k, def = null) => { try { const v = localStorage.getItem(k); return v !== null ? JSON.parse(v) : def; } catch { return def; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+function addTargetHistory(t) {
+  const hist = LS.get("si_targets", []).filter(x => x !== t);
+  hist.unshift(t);
+  LS.set("si_targets", hist.slice(0, 5));
+  const dl = document.getElementById("targetHistory");
+  if (dl) dl.innerHTML = hist.slice(0, 5).map(x => `<option value="${x}">`).join("");
+}
+
+function addRecentTheme(theme) {
+  const recent = LS.get("si_recentThemes", []).filter(t => t.path !== theme.path);
+  recent.unshift(theme);
+  LS.set("si_recentThemes", recent.slice(0, 8));
+}
 
 function toast(msg, type = "success") {
   const el = document.createElement("div");
@@ -513,6 +535,8 @@ document.getElementById("startBtn").addEventListener("click", async () => {
   btn.disabled = false;
   btn.textContent = "Start Proxy";
   if (data) {
+    addTargetHistory(target);
+    LS.set("si_target", target);
     toast(`Proxy active → ${data.target}`);
     await refreshStatus();
   }
@@ -532,29 +556,48 @@ document.getElementById("scanBtn").addEventListener("click", async () => {
   const data = await api("GET", `/list-userstyles?directory=${encodeURIComponent(dir)}`);
   if (!data) return;
   themes = data.files || [];
+  LS.set("si_scanDir", dir);
+  LS.set("si_themes", themes);
   renderThemes();
 });
 
 function renderThemes() {
   const list = document.getElementById("themeList");
-  if (themes.length === 0) {
-    list.innerHTML = '<div class="empty-state">No .user.css files found</div>';
+  const recent = LS.get("si_recentThemes", []);
+  const current = document.getElementById("themeName").textContent;
+
+  if (themes.length === 0 && recent.length === 0) {
+    list.innerHTML = '<div class="empty-state">Scan a directory to discover themes</div>';
     return;
   }
-  const current = document.getElementById("themeName").textContent;
-  list.innerHTML = themes.map(t => `
-    <div class="theme-item ${t.name === current ? 'active' : ''}" onclick="applyTheme('${esc(t.path.replace(/\\/g, "\\\\").replace(/'/g, "\\'"))}')">
+
+  function themeRow(t, isRecent) {
+    const safePath = t.path.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const active = t.name === current ? "active" : "";
+    const meta = isRecent
+      ? esc(t.path.split(/[/\\]/).pop())
+      : esc(t.file) + (t.version ? ` · v${esc(t.version)}` : "");
+    return `<div class="theme-item ${active}" onclick="applyTheme('${safePath}')">
       <div>
         <div class="name">${esc(t.name)}</div>
-        <div class="meta">${esc(t.file)}${t.version ? ` · v${esc(t.version)}` : ""}</div>
+        <div class="meta">${meta}</div>
       </div>
-    </div>
-  `).join("");
+    </div>`;
+  }
+
+  if (themes.length > 0) {
+    list.innerHTML = themes.map(t => themeRow(t, false)).join("");
+  } else {
+    list.innerHTML =
+      `<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;padding:0 4px 6px;font-weight:600;">Recent</div>` +
+      recent.map(t => themeRow(t, true)).join("");
+  }
 }
 
 async function applyTheme(filepath) {
   const data = await api("POST", "/switch-theme", { userstyle: filepath });
   if (data) {
+    addRecentTheme({ path: filepath, name: data.name });
     toast(`Theme: ${data.name}`);
     await refreshStatus();
     renderThemes();
@@ -627,6 +670,39 @@ document.getElementById("scanDir").addEventListener("keydown", (e) => {
 
 refreshStatus();
 setInterval(refreshStatus, 5000);
+
+// Restore persisted preferences
+(function restorePrefs() {
+  const savedTarget = LS.get("si_target", "");
+  if (savedTarget) document.getElementById("startTarget").value = savedTarget;
+
+  const targetHist = LS.get("si_targets", []);
+  if (targetHist.length) {
+    const dl = document.getElementById("targetHistory");
+    if (dl) dl.innerHTML = targetHist.map(x => `<option value="${x}">`).join("");
+  }
+
+  const savedDir = LS.get("si_scanDir", "");
+  if (savedDir) {
+    document.getElementById("scanDir").value = savedDir;
+    const cached = LS.get("si_themes", []);
+    if (cached.length > 0) {
+      themes = cached;
+      renderThemes();
+    }
+    // Silently refresh from disk so the list stays current
+    api("GET", `/list-userstyles?directory=${encodeURIComponent(savedDir)}`).then(data => {
+      if (data) {
+        themes = data.files || [];
+        LS.set("si_themes", themes);
+        renderThemes();
+      }
+    });
+  } else {
+    // No scan dir saved but may have recent themes to show
+    renderThemes();
+  }
+})();
 </script>
 </body>
 </html>

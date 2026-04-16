@@ -17,6 +17,12 @@ npm run setup
 
 > **Important:** After installing Git or Node.js, and after running `npm run setup`, **fully quit and relaunch Cursor** — not just "Reload MCP servers". Cursor inherits its PATH at launch time, so it won't see newly installed tools until it restarts.
 
+## Live CSS hot-swap
+
+Every proxied HTML page receives an injected `<script>` that opens a Server-Sent Events connection back to the proxy (`/__api__/events`). When a theme or snippet changes, the server broadcasts the new CSS over that connection and the browser updates the `<style>` tags in place — **no page reload needed**, scroll position and page state are preserved.
+
+Triggers: `switch_theme`, `inject_css`, panel theme picker, panel CSS editor, snippet removal.
+
 ## How it works
 
 ```
@@ -36,9 +42,10 @@ Cursor Browser  ──►  localhost:9988  ──►  https://any-site.com
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `start_proxy` | `target` (required), `userstyle` (optional), `port` (optional, default `9988`) | Start the reverse proxy, optionally loading a `.user.css` theme |
-| `switch_theme` | `userstyle` (required, `""` to clear) | Hot-swap the active theme without restarting the proxy |
+| `switch_theme` | `userstyle` (required, `""` to clear) | Hot-swap the active theme — updates live in the browser with no page reload |
 | `inject_css` | `css` (required), `id` (optional) | Append ad-hoc CSS on top of the current theme |
 | `list_userstyles` | `directory` (required) | Scan a directory for `.user.css` files and return metadata |
+| `get_current_theme` | — | Return the active theme name, file path, and proxy target |
 | `stop_proxy` | — | Shut down the proxy and free the port |
 
 ## Control panel

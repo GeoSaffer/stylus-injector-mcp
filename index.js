@@ -30,6 +30,7 @@ let themeName = "";
 let themeFile = "";
 const adhocSnippets = new Map();
 let snippetCounter = 0;
+const sseClients = new Set();
 
 function setTarget(origin) {
   targetOrigin = origin || null;
@@ -47,6 +48,14 @@ function resetState() {
   themeFile = "";
   adhocSnippets.clear();
   snippetCounter = 0;
+}
+
+function broadcast(event, data) {
+  if (sseClients.size === 0) return;
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(payload); } catch { sseClients.delete(res); }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +86,31 @@ function parseMetadata(raw) {
 // ---------------------------------------------------------------------------
 
 function injectionBlock() {
-  const parts = ["\n<!-- Injected by stylus-injector MCP -->"];
+  const liveScript = `<script id="stylus-injector-live">(function(){
+  if (window.__siLive) return;
+  window.__siLive = true;
+  var es = new EventSource('http://localhost:${PORT}/__api__/events');
+  es.addEventListener('theme-changed', function(e) {
+    var el = document.getElementById('stylus-injector-theme');
+    if (!el) { el = document.createElement('style'); el.id = 'stylus-injector-theme'; document.head.appendChild(el); }
+    el.textContent = JSON.parse(e.data);
+  });
+  es.addEventListener('theme-cleared', function() {
+    var el = document.getElementById('stylus-injector-theme');
+    if (el) el.remove();
+  });
+  es.addEventListener('snippets-updated', function(e) {
+    var el = document.getElementById('stylus-injector-adhoc');
+    if (!el) { el = document.createElement('style'); el.id = 'stylus-injector-adhoc'; document.head.appendChild(el); }
+    el.textContent = JSON.parse(e.data);
+  });
+  es.addEventListener('snippets-cleared', function() {
+    var el = document.getElementById('stylus-injector-adhoc');
+    if (el) el.remove();
+  });
+})();<\/script>`;
+
+  const parts = ["\n<!-- Injected by stylus-injector MCP -->", liveScript];
   if (themeCSS) {
     parts.push(`<style id="stylus-injector-theme">\n${themeCSS}\n</style>`);
   }
@@ -144,7 +177,6 @@ function proxyRequest(req, res) {
 
   const proxyReq = doRequest(opts, (proxyRes) => {
     const ct = proxyRes.headers["content-type"] || "";
-    const hasCSS = !!(themeCSS || adhocSnippets.size > 0);
 
     if (proxyRes.headers.location) {
       proxyRes.headers.location = proxyRes.headers.location.replace(
@@ -178,7 +210,7 @@ function proxyRequest(req, res) {
       decoded.on("end", () => {
         let body = Buffer.concat(chunks).toString("utf8");
 
-        if (ct.includes("text/html") && hasCSS) {
+        if (ct.includes("text/html")) {
           const tag = injectionBlock();
           if (/<\/head>/i.test(body)) body = body.replace(/<\/head>/i, tag + "</head>");
           else if (/<\/body>/i.test(body)) body = body.replace(/<\/body>/i, tag + "</body>");
@@ -254,6 +286,19 @@ async function handleAPI(req, res) {
       });
     }
 
+    // GET /events — SSE stream for live CSS hot-swap
+    if (req.method === "GET" && route === "/events") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      });
+      res.write("retry: 3000\n\n");
+      sseClients.add(res);
+      req.on("close", () => sseClients.delete(res));
+      return;
+    }
+
     // POST /start-proxy
     if (req.method === "POST" && route === "/start-proxy") {
       const { target, userstyle } = await readBody(req);
@@ -299,9 +344,11 @@ async function handleAPI(req, res) {
       if (userstyle === undefined) return jsonResponse(res, 400, { error: "Missing userstyle field" });
       if (!userstyle) {
         themeCSS = ""; themeName = ""; themeFile = "";
+        broadcast("theme-cleared", null);
         return jsonResponse(res, 200, { name: "", message: "Theme cleared" });
       }
       const { name } = await loadTheme(userstyle);
+      broadcast("theme-changed", themeCSS);
       return jsonResponse(res, 200, { name, message: `Switched to ${name}` });
     }
 
@@ -311,6 +358,7 @@ async function handleAPI(req, res) {
       if (!css) return jsonResponse(res, 400, { error: "Missing css field" });
       const sid = id || `adhoc-${++snippetCounter}`;
       adhocSnippets.set(sid, css);
+      broadcast("snippets-updated", [...adhocSnippets.values()].join("\n"));
       return jsonResponse(res, 200, { id: sid, count: adhocSnippets.size });
     }
 
@@ -319,12 +367,18 @@ async function handleAPI(req, res) {
       const { id } = await readBody(req);
       if (!id) return jsonResponse(res, 400, { error: "Missing id field" });
       adhocSnippets.delete(id);
+      if (adhocSnippets.size > 0) {
+        broadcast("snippets-updated", [...adhocSnippets.values()].join("\n"));
+      } else {
+        broadcast("snippets-cleared", null);
+      }
       return jsonResponse(res, 200, { removed: id, count: adhocSnippets.size });
     }
 
     // POST /clear-snippets
     if (req.method === "POST" && route === "/clear-snippets") {
       adhocSnippets.clear();
+      broadcast("snippets-cleared", null);
       return jsonResponse(res, 200, { message: "All snippets cleared" });
     }
 
@@ -448,11 +502,13 @@ mcp.tool(
   async ({ userstyle }) => {
     if (!userstyle) {
       themeCSS = ""; themeName = ""; themeFile = "";
-      return { content: [{ type: "text", text: "Theme removed. Refresh the page." }] };
+      broadcast("theme-cleared", null);
+      return { content: [{ type: "text", text: "Theme removed." }] };
     }
     try {
       const { name } = await loadTheme(userstyle);
-      return { content: [{ type: "text", text: `Switched to theme: ${name}. Refresh the page.` }] };
+      broadcast("theme-changed", themeCSS);
+      return { content: [{ type: "text", text: `Switched to theme: ${name}.` }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error loading theme: ${e.message}` }] };
     }
@@ -474,10 +530,11 @@ mcp.tool(
   async ({ css, id }) => {
     const sid = id || `adhoc-${++snippetCounter}`;
     adhocSnippets.set(sid, css);
+    broadcast("snippets-updated", [...adhocSnippets.values()].join("\n"));
     return {
       content: [{
         type: "text",
-        text: `Injected snippet "${sid}" (${css.length} chars). ${adhocSnippets.size} active snippet(s). Refresh the page.`,
+        text: `Injected snippet "${sid}" (${css.length} chars). ${adhocSnippets.size} active snippet(s).`,
       }],
     };
   }
@@ -516,6 +573,30 @@ mcp.tool(
       }
     }
     return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+  }
+);
+
+// ----- get_current_theme --------------------------------------------------
+
+mcp.tool(
+  "get_current_theme",
+  "Return the currently active theme name and file path, plus the proxy target. Use this to understand what theme is loaded before making changes.",
+  {},
+  async () => {
+    if (!themeName && !themeFile) {
+      return {
+        content: [{
+          type: "text",
+          text: `No theme loaded.\nProxy target: ${targetOrigin || "(none — panel-only mode)"}`,
+        }],
+      };
+    }
+    return {
+      content: [{
+        type: "text",
+        text: `Active theme: ${themeName}\nFile: ${themeFile}\nProxy target: ${targetOrigin || "(none — panel-only mode)"}`,
+      }],
+    };
   }
 );
 
