@@ -118,6 +118,22 @@ package.json   Dependencies: @modelcontextprotocol/sdk, zod
 
 ## Requirements
 
+- **Git** — [download](https://git-scm.com) or install via command line:
+  ```bash
+  # Windows (winget)
+  winget install Git.Git
+
+  # Windows (choco)
+  choco install git
+
+  # macOS (Homebrew)
+  brew install git
+
+  # Linux (Debian/Ubuntu)
+  sudo apt-get install -y git
+  ```
+  Restart your terminal after installing, then verify with `git --version`.
+
 - **Node.js >= 18** — [download](https://nodejs.org) or install via command line:
   ```bash
   # Windows (winget)
