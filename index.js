@@ -167,16 +167,27 @@ function proxyRequest(req, res) {
       );
     }
 
-    if (ct.includes("text/html") && hasCSS) {
+    if (ct.includes("text/html") || ct.includes("text/css")) {
+      // Buffer HTML and CSS so we can:
+      //  - inject theme CSS into HTML
+      //  - rewrite all absolute target-origin URLs to localhost in both
+      //    (fixes icon fonts, @font-face src, <link href>, <script src>, etc.)
       const decoded = decompress(proxyRes, proxyRes.headers["content-encoding"]);
       const chunks = [];
       decoded.on("data", (c) => chunks.push(c));
       decoded.on("end", () => {
         let body = Buffer.concat(chunks).toString("utf8");
-        const tag = injectionBlock();
-        if (/<\/head>/i.test(body)) body = body.replace(/<\/head>/i, tag + "</head>");
-        else if (/<\/body>/i.test(body)) body = body.replace(/<\/body>/i, tag + "</body>");
-        else body += tag;
+
+        if (ct.includes("text/html") && hasCSS) {
+          const tag = injectionBlock();
+          if (/<\/head>/i.test(body)) body = body.replace(/<\/head>/i, tag + "</head>");
+          else if (/<\/body>/i.test(body)) body = body.replace(/<\/body>/i, tag + "</body>");
+          else body += tag;
+        }
+
+        // Rewrite every absolute URL pointing at the target back through the proxy
+        // Covers: href, src, url(), @import, fetch() strings in inline scripts, etc.
+        if (hostPattern) body = body.replace(hostPattern, `http://localhost:${PORT}`);
 
         const hdrs = { ...proxyRes.headers };
         delete hdrs["content-encoding"];
@@ -188,9 +199,10 @@ function proxyRequest(req, res) {
       });
       decoded.on("error", (e) => {
         res.writeHead(502);
-        res.end(`Decompression error: ${e.message}`);
+        res.end(`Proxy error: ${e.message}`);
       });
     } else {
+      // Binary/other (images, fonts by path, JS, API JSON) — passthrough
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       proxyRes.pipe(res);
     }
