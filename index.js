@@ -388,6 +388,18 @@ async function handleAPI(req, res) {
       return jsonResponse(res, 200, { message: "All snippets cleared" });
     }
 
+    // POST /refresh-theme
+    if (req.method === "POST" && route === "/refresh-theme") {
+      if (!themeCSS) {
+        return jsonResponse(res, 200, { message: "No theme active, nothing to refresh" });
+      }
+      const savedCSS = themeCSS;
+      broadcast("theme-cleared", null);
+      await new Promise(r => setTimeout(r, 50));
+      broadcast("theme-changed", savedCSS);
+      return jsonResponse(res, 200, { message: "Theme refreshed" });
+    }
+
     // POST /stop
     if (req.method === "POST" && route === "/stop") {
       setTarget(null);
@@ -579,6 +591,24 @@ mcp.tool(
       }
     }
     return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+  }
+);
+
+// ----- refresh_theme ------------------------------------------------------
+
+mcp.tool(
+  "refresh_theme",
+  "Force a full CSS re-render by cycling the active theme off then back on. Use when style changes are not visually applying correctly.",
+  {},
+  async () => {
+    if (!themeCSS) {
+      return { content: [{ type: "text", text: "No theme active, nothing to refresh." }] };
+    }
+    const savedCSS = themeCSS;
+    broadcast("theme-cleared", null);
+    await new Promise(r => setTimeout(r, 50));
+    broadcast("theme-changed", savedCSS);
+    return { content: [{ type: "text", text: "Theme refreshed." }] };
   }
 );
 

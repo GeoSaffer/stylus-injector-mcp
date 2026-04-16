@@ -45,6 +45,7 @@ Cursor Browser  ──►  localhost:9988  ──►  https://any-site.com
 | `switch_theme` | `userstyle` (required, `""` to clear) | Hot-swap the active theme — updates live in the browser with no page reload |
 | `inject_css` | `css` (required), `id` (optional) | Append ad-hoc CSS on top of the current theme |
 | `list_userstyles` | `directory` (required) | Scan a directory for `.user.css` files and return metadata |
+| `refresh_theme` | — | Cycle the active theme off then on to force a full CSS re-render |
 | `get_current_theme` | — | Return the active theme name, file path, and proxy target |
 | `stop_proxy` | — | Shut down the proxy and free the port |
 

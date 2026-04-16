@@ -372,7 +372,10 @@
     <div class="card-title">Theme</div>
     <div class="theme-current">
       <span class="theme-name none" id="themeName">No theme loaded</span>
-      <button class="btn-ghost btn-sm" id="clearThemeBtn" disabled>Clear</button>
+      <div style="display:flex;gap:6px;">
+        <button class="btn-ghost btn-sm" id="refreshThemeBtn" disabled title="Cycle theme off then on to force a full CSS re-render">Refresh</button>
+        <button class="btn-ghost btn-sm" id="clearThemeBtn" disabled>Clear</button>
+      </div>
     </div>
     <div class="scan-row">
       <input type="text" id="scanDir" placeholder="Directory path to scan for .user.css files">
@@ -497,14 +500,17 @@ async function refreshStatus() {
   if (running) {
     const nameEl = document.getElementById("themeName");
     const clearBtn = document.getElementById("clearThemeBtn");
+    const refreshBtn = document.getElementById("refreshThemeBtn");
     if (data.theme.name) {
       nameEl.textContent = data.theme.name;
       nameEl.className = "theme-name";
       clearBtn.disabled = false;
+      refreshBtn.disabled = false;
     } else {
       nameEl.textContent = "No theme loaded";
       nameEl.className = "theme-name none";
       clearBtn.disabled = true;
+      refreshBtn.disabled = true;
     }
     renderSnippets(data.snippets);
   }
@@ -611,6 +617,11 @@ async function applyTheme(filepath) {
     renderThemes();
   }
 }
+
+document.getElementById("refreshThemeBtn").addEventListener("click", async () => {
+  const data = await api("POST", "/refresh-theme");
+  if (data) toast("Theme refreshed");
+});
 
 document.getElementById("clearThemeBtn").addEventListener("click", async () => {
   const data = await api("POST", "/switch-theme", { userstyle: "" });
