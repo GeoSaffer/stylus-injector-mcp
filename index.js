@@ -31,6 +31,8 @@ let themeFile = "";
 const adhocSnippets = new Map();
 let snippetCounter = 0;
 const sseClients = new Set();
+let lastScanDir = "";
+let lastScanFiles = [];
 
 function setTarget(origin) {
   targetOrigin = origin || null;
@@ -283,6 +285,8 @@ async function handleAPI(req, res) {
           preview: css.slice(0, 120),
           length: css.length,
         })),
+        scanDir: lastScanDir,
+        scanFiles: lastScanFiles,
       });
     }
 
@@ -335,6 +339,8 @@ async function handleAPI(req, res) {
           files.push({ file, error: "Could not read file" });
         }
       }
+      lastScanDir = dir;
+      lastScanFiles = files;
       return jsonResponse(res, 200, { files });
     }
 

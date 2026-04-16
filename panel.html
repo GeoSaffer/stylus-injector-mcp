@@ -484,6 +484,16 @@ async function refreshStatus() {
   document.getElementById("snippetsCard").style.display = running ? "block" : "none";
   document.getElementById("footer").style.display       = running ? "flex"  : "none";
 
+  // Restore scan dir + theme list from server state (persists across panel refreshes)
+  if (data.scanDir) {
+    const dirInput = document.getElementById("scanDir");
+    if (!dirInput.value) dirInput.value = data.scanDir;
+  }
+  if (data.scanFiles && data.scanFiles.length > 0 && themes.length === 0) {
+    themes = data.scanFiles;
+    renderThemes();
+  }
+
   if (running) {
     const nameEl = document.getElementById("themeName");
     const clearBtn = document.getElementById("clearThemeBtn");
@@ -556,8 +566,6 @@ document.getElementById("scanBtn").addEventListener("click", async () => {
   const data = await api("GET", `/list-userstyles?directory=${encodeURIComponent(dir)}`);
   if (!data) return;
   themes = data.files || [];
-  LS.set("si_scanDir", dir);
-  LS.set("si_themes", themes);
   renderThemes();
 });
 
@@ -672,6 +680,8 @@ refreshStatus();
 setInterval(refreshStatus, 5000);
 
 // Restore persisted preferences
+// Scan dir + themes come from server state via refreshStatus().
+// Only target URL history uses localStorage (purely client-side preference).
 (function restorePrefs() {
   const savedTarget = LS.get("si_target", "");
   if (savedTarget) document.getElementById("startTarget").value = savedTarget;
@@ -682,26 +692,8 @@ setInterval(refreshStatus, 5000);
     if (dl) dl.innerHTML = targetHist.map(x => `<option value="${x}">`).join("");
   }
 
-  const savedDir = LS.get("si_scanDir", "");
-  if (savedDir) {
-    document.getElementById("scanDir").value = savedDir;
-    const cached = LS.get("si_themes", []);
-    if (cached.length > 0) {
-      themes = cached;
-      renderThemes();
-    }
-    // Silently refresh from disk so the list stays current
-    api("GET", `/list-userstyles?directory=${encodeURIComponent(savedDir)}`).then(data => {
-      if (data) {
-        themes = data.files || [];
-        LS.set("si_themes", themes);
-        renderThemes();
-      }
-    });
-  } else {
-    // No scan dir saved but may have recent themes to show
-    renderThemes();
-  }
+  // Show recent themes immediately while the first refreshStatus() call completes
+  renderThemes();
 })();
 </script>
 </body>
