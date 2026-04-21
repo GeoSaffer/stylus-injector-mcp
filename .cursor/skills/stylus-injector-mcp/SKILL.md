@@ -178,7 +178,58 @@ Cycles the theme off → waits 50 ms → back on. Forces full style recalculatio
 
 ---
 
-## Scenario H — Proxy appears active but CSS is not injecting
+## Scenario I — Site redirects to a different domain during login
+
+Some sites redirect the browser to an auth subdomain during sign-in (e.g. `accounts.skilljar.com`). Without that subdomain also being proxied, the browser escapes the proxy tunnel when the redirect happens and the theme stops applying.
+
+**Register every domain the site may redirect to before starting your session.**
+
+**Step 1: Start the primary proxy**
+
+```
+start_proxy({ target: "https://skilljar.com" })
+```
+
+**Step 2: Immediately add the auth subdomain on a new port**
+
+```
+add_target({ target: "https://accounts.skilljar.com" })
+```
+
+Response:
+```
+Target added: http://localhost:9989 → https://accounts.skilljar.com
+
+All active proxies:
+  http://localhost:9988 → https://skilljar.com
+  http://localhost:9989 → https://accounts.skilljar.com
+```
+
+**Step 3: Navigate the browser to the primary proxy**
+
+```
+browser_navigate({ url: "http://localhost:9988/" })
+```
+
+When the user clicks "Login", the proxy rewrites the redirect from `https://accounts.skilljar.com/...` to `http://localhost:9989/...`. The browser stays proxied throughout the login flow and returns to `http://localhost:9988` on success.
+
+**All proxies share the same theme** — you only switch themes once.
+
+**Step 4: List active proxies at any time**
+
+```
+list_targets()
+```
+
+**Step 5: Remove a target when done (optional)**
+
+```
+remove_target({ target: "https://accounts.skilljar.com" })
+```
+
+---
+
+## Scenario J — Proxy appears active but CSS is not injecting
 
 A stale Node.js process from a previous session may be holding port `9988`. Check:
 
@@ -217,11 +268,14 @@ The proxy strips the metadata block automatically — only the raw CSS rules are
 |---|---|---|
 | `list_userstyles` | `directory` | Scans folder, registers it as the active theme folder, returns `{ file, path, name, version }` per theme. Always use `path` in subsequent calls. Call this before `start_proxy` to discover themes you can switch between freely. |
 | `start_proxy` | `target` | `target` = full origin e.g. `https://example.com`. `userstyle` is **optional** — omit it to start without a theme and apply one later via `switch_theme`. |
-| `switch_theme` | `userstyle` | Absolute path to `.user.css`, or `""` to clear. Hot-swaps live. |
+| `add_target` | `target` | Add another domain on its own port (auto-assigned from 9989+). All proxies share the same theme. Use for auth subdomains and any domain the site redirects to. Optional `port` to specify explicitly. |
+| `remove_target` | `port` or `target` | Remove a proxy target by port number or origin URL. |
+| `list_targets` | — | List all active proxy targets with their ports and local URLs. |
+| `switch_theme` | `userstyle` | Absolute path to `.user.css`, or `""` to clear. Hot-swaps live across all proxies. |
 | `refresh_theme` | — | Force re-render. Use when styles aren't applying visually. |
 | `inject_css` | `css` | Raw CSS string. Optional `id` to replace a previous snippet. |
-| `get_current_theme` | — | Returns active theme name + file path + proxy target. Always call before switching. |
-| `stop_proxy` | — | Stops proxy. Panel stays up at `/__panel__`. |
+| `get_current_theme` | — | Returns active theme name + file path + all proxy targets. Always call before switching. |
+| `stop_proxy` | — | Stops all proxies. Panel stays up at `/__panel__`. |
 
 ---
 
@@ -236,3 +290,4 @@ The proxy strips the metadata block automatically — only the raw CSS rules are
 7. **After `switch_theme` or `inject_css` the change is already live** — do not ask the user to reload.
 8. **If styles aren't showing**, call `refresh_theme()` — do not ask the user to reload.
 9. **Inspect real HTML before writing CSS** — use the platform snippet in Scenario D to find actual class names.
+10. **Register auth subdomains before navigating** — if the site redirects to a different domain during login, call `add_target` with that domain immediately after `start_proxy`, before the user navigates or logs in. Failing to do this causes the browser to escape the proxy tunnel.

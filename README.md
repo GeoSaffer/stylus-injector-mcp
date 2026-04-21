@@ -27,27 +27,34 @@ Triggers: `switch_theme`, `inject_css`, panel theme picker, panel CSS editor, sn
 
 ```
 Cursor Browser  ──►  localhost:9988  ──►  https://any-site.com
-                     (reverse proxy)
-                     injects <style> into every HTML response
+                     localhost:9989  ──►  https://accounts.any-site.com  (optional extra target)
+                     (reverse proxies)
+                     inject <style> into every HTML response
+                     cross-domain URL rewriting keeps login redirects proxied
 ```
 
 1. The agent (or you via the control panel) calls `start_proxy` with a target origin.
 2. A local HTTP server starts on `:9988` and forwards all requests to the target.
-3. Non-HTML responses (JS, images, fonts, API calls) pass through untouched.
-4. HTML responses are intercepted — processed theme CSS is injected before `</head>`.
-5. Navigate the Cursor embedded browser to `http://localhost:9988` to see the themed page.
+3. Call `add_target` to register additional domains (e.g. auth subdomains) on ports 9989, 9990, etc.
+4. Non-HTML responses (JS, images, fonts, API calls) pass through untouched.
+5. HTML responses are intercepted — theme CSS is injected before `</head>`.
+6. All `Location` headers and body URLs are rewritten across every registered target so the browser stays proxied through login flows.
+7. Navigate the Cursor embedded browser to `http://localhost:9988` to see the themed page.
 
 ## MCP tools
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `list_userstyles` | `directory` (required) | Scan a folder for `.user.css` files, register it as the active theme folder, and return metadata. Always call this first — use the returned `path` values in all other calls. |
-| `start_proxy` | `target` (required), `userstyle` (optional), `port` (optional, default `9988`) | Start the reverse proxy. `userstyle` is optional — omit it to start without a theme and apply one later via `switch_theme`. |
-| `switch_theme` | `userstyle` (required, `""` to clear) | Hot-swap to any theme using its `path` from `list_userstyles` — updates live, no page reload |
+| `start_proxy` | `target` (required), `userstyle` (optional) | Start the primary reverse proxy. `userstyle` is optional — omit it to start without a theme and apply one later via `switch_theme`. |
+| `add_target` | `target` (required), `port` (optional) | Add another domain on its own port (auto-assigned from 9989). All targets share the same theme. Use for auth subdomains or any domain the site redirects to. |
+| `remove_target` | `port` or `target` | Remove a proxy target by port number or origin URL. |
+| `list_targets` | — | List all active proxy targets with their ports and local URLs. |
+| `switch_theme` | `userstyle` (required, `""` to clear) | Hot-swap to any theme using its `path` from `list_userstyles` — updates live across all proxies, no page reload |
 | `inject_css` | `css` (required), `id` (optional) | Append ad-hoc CSS on top of the current theme |
 | `refresh_theme` | — | Cycle the active theme off then on to force a full CSS re-render |
-| `get_current_theme` | — | Return the active theme name, file path, and proxy target |
-| `stop_proxy` | — | Shut down the proxy and free the port |
+| `get_current_theme` | — | Return the active theme name, file path, and all proxy targets |
+| `stop_proxy` | — | Shut down all proxies and free their ports |
 
 ## Control panel
 
@@ -56,11 +63,12 @@ The control panel is **always available** at `http://localhost:9988/__panel__` t
 | Section | What it does |
 |---------|-------------|
 | **Start Proxy** | Enter a target URL (and optional theme path) and click Start — shown when proxy is idle |
-| **Status** | Live target origin, port, active theme name (auto-refreshes every 5s) |
+| **Status** | Live list of all active proxy targets with ports, “Open ↗” links, and per-target Remove buttons (auto-refreshes every 5s) |
+| **Add Target** | Add additional domains (e.g. auth subdomains) on new ports — shown when proxy is running |
 | **Theme** | Scan any directory for `.user.css` files, click to apply, clear to remove |
 | **CSS Editor** | Write and inject ad-hoc CSS (Ctrl+Enter to submit), assign snippet IDs |
 | **Snippets** | View active snippets with previews, remove individually |
-| **Stop** | Return to idle state — panel stays available |
+| **Stop All** | Stop all proxies — panel stays available |
 
 The panel uses a REST API at `/__api__/*` on the same port. Every operation available via MCP tools is also available through the panel.
 
@@ -85,18 +93,22 @@ The panel uses a REST API at `/__api__/*` on the same port. Every operation avai
 
 2. start_proxy({ target: "https://example.com" })
    → Proxy active: http://localhost:9988 → https://example.com
-     userstyle is optional — start without a theme and apply one after via switch_theme.
 
-3. browser_navigate({ url: "http://localhost:9988/" })
-   → Page loads through proxy with SSE live-swap active
+3. add_target({ target: "https://accounts.example.com" })
+   → Target added: http://localhost:9989 → https://accounts.example.com
+     Register auth subdomains BEFORE navigating so login redirects stay proxied.
 
-4. switch_theme({ userstyle: "C:/themes/dark.user.css" })
-   → Dark Theme applied live — no page reload needed
+4. browser_navigate({ url: "http://localhost:9988/" })
+   → Page loads through proxy. Login redirects to accounts.example.com are
+     automatically rewritten to http://localhost:9989/ — stays proxied.
 
-5. switch_theme({ userstyle: "C:/themes/blue.user.css" })
+5. switch_theme({ userstyle: "C:/themes/dark.user.css" })
+   → Dark Theme applied live across all proxies — no page reload needed
+
+6. switch_theme({ userstyle: "C:/themes/blue.user.css" })
    → Switch to any other theme in the folder at any time — live, no reload
 
-6. Inspect real HTML class names before writing CSS (third-party sites only)
+7. Inspect real HTML class names before writing CSS (third-party sites only)
    → macOS / Linux:
      curl -s "http://localhost:9988/" | grep -oE '<div[^>]+class="[^"]{10,60}"' | head -20
 
@@ -105,14 +117,14 @@ The panel uses a REST API at `/__api__/*` on the same port. Every operation avai
      [regex]::Matches($html, '<div[^>]+class="[^"]{10,60}"') |
        Select-Object -First 20 | ForEach-Object { $_.Value }
 
-7. inject_css({ css: "body { background: #0f0f17 !important; }", id: "debug" })
+8. inject_css({ css: "body { background: #0f0f17 !important; }", id: "debug" })
    → Injected snippet "debug".  (applies live — no page reload)
 
-8. refresh_theme()
+9. refresh_theme()
    → Cycles theme off then on to force a full CSS re-render
 
-9. stop_proxy()
-   → Proxy stopped. Port 9988 freed.
+10. stop_proxy()
+    → All proxies stopped. Ports 9988, 9989 freed.
 ```
 
 ## Manual registration
@@ -159,7 +171,8 @@ The parser automatically:
 | Feature | Detail |
 |---------|--------|
 | **Header rewriting** | `Host`, `Referer`, `Origin` rewritten to match the target |
-| **Redirect rewriting** | `Location` headers rewritten back to `localhost` |
+| **Redirect rewriting** | `Location` headers rewritten back to `localhost` — across all registered targets |
+| **Cross-domain URL rewriting** | All body URLs (HTML + CSS) rewritten across every registered target — links between main site and auth subdomain stay proxied |
 | **Cookie rewriting** | `domain` and `secure` attributes stripped for localhost |
 | **Security headers** | CSP, HSTS, X-Frame-Options removed for local dev |
 | **Decompression** | gzip / brotli / deflate handled transparently |

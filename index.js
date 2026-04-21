@@ -23,8 +23,11 @@ const PORT = parseInt(process.env.STYLUS_PORT || "9988", 10);
 // State
 // ---------------------------------------------------------------------------
 
-let targetOrigin = null;   // null = panel-only mode; string = proxy active
-let hostPattern = null;
+// targets: Map<port, { origin: string|null, hostPattern: RegExp|null, server: http.Server|null }>
+// The primary server on PORT is always in this map (origin may be null = panel-only mode).
+// Additional servers (PORT+1, PORT+2, …) are added on demand via add_target.
+const targets = new Map();
+
 let themeCSS = "";
 let themeName = "";
 let themeFile = "";
@@ -34,14 +37,34 @@ const sseClients = new Set();
 let lastScanDir = "";
 let lastScanFiles = [];
 
-function setTarget(origin) {
-  targetOrigin = origin || null;
-  hostPattern = targetOrigin
-    ? new RegExp(
-        `https?://${new URL(targetOrigin).host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-        "gi"
-      )
-    : null;
+// ---------------------------------------------------------------------------
+// State helpers
+// ---------------------------------------------------------------------------
+
+function buildHostPattern(origin) {
+  return new RegExp(
+    `https?://${new URL(origin).host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    "gi"
+  );
+}
+
+function setTargetForPort(port, origin) {
+  const entry = targets.get(port);
+  if (!entry) return;
+  entry.origin = origin || null;
+  entry.hostPattern = origin ? buildHostPattern(origin) : null;
+}
+
+function getActiveTargets() {
+  return [...targets.entries()]
+    .filter(([, e]) => e.origin)
+    .map(([port, e]) => ({ port, origin: e.origin, url: `http://localhost:${port}` }));
+}
+
+function nextAvailablePort() {
+  let p = PORT + 1;
+  while (targets.has(p)) p++;
+  return p;
 }
 
 function resetState() {
@@ -88,10 +111,11 @@ function parseMetadata(raw) {
 // ---------------------------------------------------------------------------
 
 function injectionBlock() {
+  // Use a relative URL so the SSE connection works from any proxy port
   const liveScript = `<script id="stylus-injector-live">(function(){
   if (window.__siLive) return;
   window.__siLive = true;
-  var es = new EventSource('http://localhost:${PORT}/__api__/events');
+  var es = new EventSource('/__api__/events');
   es.addEventListener('theme-changed', function(e) {
     var el = document.getElementById('stylus-injector-theme');
     if (!el) { el = document.createElement('style'); el.id = 'stylus-injector-theme'; document.head.appendChild(el); }
@@ -152,19 +176,43 @@ async function loadTheme(filepath) {
 }
 
 // ---------------------------------------------------------------------------
+// URL rewriters — rewrite across ALL registered targets (cross-domain support)
+// ---------------------------------------------------------------------------
+
+function rewriteAllTargetUrls(body) {
+  for (const [port, entry] of targets) {
+    if (entry.origin && entry.hostPattern) {
+      body = body.replace(entry.hostPattern, `http://localhost:${port}`);
+    }
+  }
+  return body;
+}
+
+function rewriteLocationHeader(location) {
+  for (const [port, entry] of targets) {
+    if (entry.origin && entry.hostPattern) {
+      const rewritten = location.replace(entry.hostPattern, `http://localhost:${port}`);
+      if (rewritten !== location) return rewritten;
+    }
+  }
+  return location;
+}
+
+// ---------------------------------------------------------------------------
 // Proxy request handler
 // ---------------------------------------------------------------------------
 
-function proxyRequest(req, res) {
-  const url = new URL(targetOrigin);
+function proxyRequest(req, res, entry, port) {
+  const { origin } = entry;
+  const url = new URL(origin);
   const secure = url.protocol === "https:";
   const doRequest = secure ? https.request : http.request;
 
   const headers = { ...req.headers, host: url.host };
   if (headers.referer) {
-    headers.referer = headers.referer.replace(`http://localhost:${PORT}`, url.origin);
+    headers.referer = headers.referer.replace(`http://localhost:${port}`, url.origin);
   }
-  if (headers.origin && headers.origin.includes(`localhost:${PORT}`)) {
+  if (headers.origin && headers.origin.includes(`localhost:${port}`)) {
     headers.origin = url.origin;
   }
   delete headers["accept-encoding"];
@@ -181,10 +229,7 @@ function proxyRequest(req, res) {
     const ct = proxyRes.headers["content-type"] || "";
 
     if (proxyRes.headers.location) {
-      proxyRes.headers.location = proxyRes.headers.location.replace(
-        hostPattern,
-        `http://localhost:${PORT}`
-      );
+      proxyRes.headers.location = rewriteLocationHeader(proxyRes.headers.location);
     }
 
     delete proxyRes.headers["content-security-policy"];
@@ -202,10 +247,6 @@ function proxyRequest(req, res) {
     }
 
     if (ct.includes("text/html") || ct.includes("text/css")) {
-      // Buffer HTML and CSS so we can:
-      //  - inject theme CSS into HTML
-      //  - rewrite all absolute target-origin URLs to localhost in both
-      //    (fixes icon fonts, @font-face src, <link href>, <script src>, etc.)
       const decoded = decompress(proxyRes, proxyRes.headers["content-encoding"]);
       const chunks = [];
       decoded.on("data", (c) => chunks.push(c));
@@ -219,9 +260,8 @@ function proxyRequest(req, res) {
           else body += tag;
         }
 
-        // Rewrite every absolute URL pointing at the target back through the proxy
-        // Covers: href, src, url(), @import, fetch() strings in inline scripts, etc.
-        if (hostPattern) body = body.replace(hostPattern, `http://localhost:${PORT}`);
+        // Rewrite URLs across ALL registered targets — keeps login redirects proxied
+        body = rewriteAllTargetUrls(body);
 
         const hdrs = { ...proxyRes.headers };
         delete hdrs["content-encoding"];
@@ -236,7 +276,6 @@ function proxyRequest(req, res) {
         res.end(`Proxy error: ${e.message}`);
       });
     } else {
-      // Binary/other (images, fonts by path, JS, API JSON) — passthrough
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       proxyRes.pipe(res);
     }
@@ -277,7 +316,7 @@ async function handleAPI(req, res) {
     // GET /status
     if (req.method === "GET" && route === "/status") {
       return jsonResponse(res, 200, {
-        target: targetOrigin,
+        targets: getActiveTargets(),
         port: PORT,
         theme: { name: themeName || "", file: themeFile || "" },
         snippets: [...adhocSnippets.entries()].map(([id, css]) => ({
@@ -307,14 +346,57 @@ async function handleAPI(req, res) {
     if (req.method === "POST" && route === "/start-proxy") {
       const { target, userstyle } = await readBody(req);
       if (!target) return jsonResponse(res, 400, { error: "Missing target URL" });
-      setTarget(target);
+      setTargetForPort(PORT, target);
       resetState();
       let theme = "";
       if (userstyle) {
         const { name } = await loadTheme(userstyle);
         theme = name;
       }
-      return jsonResponse(res, 200, { target, theme, port: PORT });
+      return jsonResponse(res, 200, { targets: getActiveTargets(), theme, port: PORT });
+    }
+
+    // POST /add-target
+    if (req.method === "POST" && route === "/add-target") {
+      const body = await readBody(req);
+      if (!body.target) return jsonResponse(res, 400, { error: "Missing target URL" });
+      try {
+        const assignedPort = await addTargetOrigin(body.target, body.port);
+        return jsonResponse(res, 200, {
+          port: assignedPort,
+          target: body.target,
+          url: `http://localhost:${assignedPort}`,
+          targets: getActiveTargets(),
+        });
+      } catch (e) {
+        return jsonResponse(res, 500, { error: e.message });
+      }
+    }
+
+    // POST /remove-target
+    if (req.method === "POST" && route === "/remove-target") {
+      const body = await readBody(req);
+      let targetPort = body.port;
+      if (!targetPort && body.target) {
+        for (const [p, e] of targets) {
+          if (e.origin === body.target) { targetPort = p; break; }
+        }
+      }
+      if (!targetPort) return jsonResponse(res, 400, { error: "Specify port or target URL" });
+      try {
+        await removeTargetPort(targetPort);
+        return jsonResponse(res, 200, {
+          message: `Target on port ${targetPort} removed`,
+          targets: getActiveTargets(),
+        });
+      } catch (e) {
+        return jsonResponse(res, 400, { error: e.message });
+      }
+    }
+
+    // GET /list-targets
+    if (req.method === "GET" && route === "/list-targets") {
+      return jsonResponse(res, 200, { targets: getActiveTargets() });
     }
 
     // GET /list-userstyles
@@ -334,7 +416,13 @@ async function handleAPI(req, res) {
         try {
           const raw = await fs.promises.readFile(path.join(dir, file), "utf8");
           const meta = parseMetadata(raw);
-          files.push({ file, path: path.join(dir, file), name: meta.name || file, version: meta.version || "", description: meta.description || "" });
+          files.push({
+            file,
+            path: path.join(dir, file),
+            name: meta.name || file,
+            version: meta.version || "",
+            description: meta.description || "",
+          });
         } catch {
           files.push({ file, error: "Could not read file" });
         }
@@ -402,9 +490,9 @@ async function handleAPI(req, res) {
 
     // POST /stop
     if (req.method === "POST" && route === "/stop") {
-      setTarget(null);
+      await stopAllTargets();
       resetState();
-      return jsonResponse(res, 200, { message: "Proxy stopped. Panel still available." });
+      return jsonResponse(res, 200, { message: "All proxies stopped. Panel still available." });
     }
 
     jsonResponse(res, 404, { error: "Unknown API route" });
@@ -414,39 +502,108 @@ async function handleAPI(req, res) {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP server — starts immediately when MCP server loads
-// Panel is always available at http://localhost:PORT/__panel__
+// Server management
 // ---------------------------------------------------------------------------
 
-const server = http.createServer((req, res) => {
-  // Serve control panel (always available)
-  if (req.url === "/__panel__" || req.url === "/__panel__/") {
-    res.writeHead(200, {
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Length": Buffer.byteLength(panelHTML),
+function createProxyServer(port) {
+  targets.set(port, { origin: null, hostPattern: null, server: null });
+
+  const server = http.createServer((req, res) => {
+    const entry = targets.get(port);
+
+    if (req.url === "/__panel__" || req.url === "/__panel__/") {
+      const buf = Buffer.from(panelHTML, "utf8");
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": buf.length,
+      });
+      res.end(buf);
+      return;
+    }
+
+    if (req.url.startsWith("/__api__/")) {
+      handleAPI(req, res).catch((e) => jsonResponse(res, 500, { error: e.message }));
+      return;
+    }
+
+    if (!entry || !entry.origin) {
+      res.writeHead(302, { Location: "/__panel__" });
+      res.end();
+      return;
+    }
+
+    proxyRequest(req, res, entry, port);
+  });
+
+  targets.get(port).server = server;
+  return server;
+}
+
+async function addTargetOrigin(origin, portArg) {
+  const assignedPort = portArg || nextAvailablePort();
+
+  if (!targets.has(assignedPort)) {
+    const server = createProxyServer(assignedPort);
+    await new Promise((resolve, reject) => {
+      server.once("error", (e) => {
+        targets.delete(assignedPort);
+        reject(e);
+      });
+      server.listen(assignedPort, () => {
+        server.on("error", (e) => {
+          process.stderr.write(`[stylus-injector] Server error (port ${assignedPort}): ${e.message}\n`);
+        });
+        resolve();
+      });
     });
-    res.end(panelHTML);
-    return;
   }
 
-  // API routes (always available)
-  if (req.url.startsWith("/__api__/")) {
-    handleAPI(req, res).catch((e) => jsonResponse(res, 500, { error: e.message }));
-    return;
-  }
+  setTargetForPort(assignedPort, origin);
+  process.stderr.write(`[stylus-injector] Target added: http://localhost:${assignedPort} → ${origin}\n`);
+  return assignedPort;
+}
 
-  // No target set — redirect to panel
-  if (!targetOrigin) {
-    res.writeHead(302, { Location: "/__panel__" });
-    res.end();
-    return;
+async function removeTargetPort(port) {
+  if (!targets.has(port)) throw new Error(`No proxy on port ${port}`);
+  const entry = targets.get(port);
+  if (port === PORT) {
+    // Primary server — clear its target but keep the server running
+    setTargetForPort(PORT, null);
+  } else {
+    await new Promise((resolve) => entry.server.close(resolve));
+    targets.delete(port);
   }
+  process.stderr.write(`[stylus-injector] Target removed on port ${port}\n`);
+}
 
-  // Proxy mode — forward to target
-  proxyRequest(req, res);
+async function stopAllTargets() {
+  const ports = [...targets.keys()];
+  for (const port of ports) {
+    if (port === PORT) {
+      setTargetForPort(PORT, null);
+    } else {
+      const entry = targets.get(port);
+      if (entry && entry.server) {
+        await new Promise((resolve) => entry.server.close(resolve));
+        targets.delete(port);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Start primary server — panel always available at http://localhost:PORT/__panel__
+// ---------------------------------------------------------------------------
+
+const primaryServer = createProxyServer(PORT);
+
+primaryServer.listen(PORT, () => {
+  process.stderr.write(
+    `[stylus-injector] Panel ready: http://localhost:${PORT}/__panel__\n`
+  );
 });
 
-server.on("error", (e) => {
+primaryServer.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
     process.stderr.write(
       `[stylus-injector] Port ${PORT} is already in use. Set STYLUS_PORT env var in mcp.json to use a different port.\n`
@@ -454,12 +611,6 @@ server.on("error", (e) => {
   } else {
     process.stderr.write(`[stylus-injector] Server error: ${e.message}\n`);
   }
-});
-
-server.listen(PORT, () => {
-  process.stderr.write(
-    `[stylus-injector] Panel ready: http://localhost:${PORT}/__panel__\n`
-  );
 });
 
 // ---------------------------------------------------------------------------
@@ -475,7 +626,7 @@ const mcp = new McpServer({
 
 mcp.tool(
   "start_proxy",
-  "Activate the reverse proxy — sets the target site and optionally loads a theme. The panel is always available at /__panel__ regardless.",
+  "Activate the reverse proxy for the primary domain — sets the main target site and optionally loads a theme. The panel is always available at /__panel__ regardless. Use add_target afterwards to register additional domains (e.g. auth subdomains) so login redirects stay proxied.",
   {
     target: z.string().describe("Origin to proxy, e.g. https://example.com"),
     userstyle: z
@@ -484,7 +635,7 @@ mcp.tool(
       .describe("Absolute or relative path to a .user.css file to inject"),
   },
   async ({ target, userstyle }) => {
-    setTarget(target);
+    setTargetForPort(PORT, target);
     resetState();
 
     let themeInfo = "";
@@ -501,9 +652,83 @@ mcp.tool(
     return {
       content: [{
         type: "text",
-        text: `Proxy active: ${localUrl} → ${target}${themeInfo}\n\nEmbedded browser: ${localUrl}\nControl panel:    ${localUrl}/__panel__`,
+        text: `Proxy active: ${localUrl} → ${target}${themeInfo}\n\nEmbedded browser: ${localUrl}\nControl panel:    ${localUrl}/__panel__\n\nTip: use add_target to register additional domains (e.g. https://accounts.example.com) before navigating so login redirects stay proxied.`,
       }],
     };
+  }
+);
+
+// ----- add_target ---------------------------------------------------------
+
+mcp.tool(
+  "add_target",
+  "Add an additional domain to the proxy on a new port. All targets share the same active theme and SSE channel. Use this to keep login redirects proxied — register every subdomain the site redirects to (e.g. an auth subdomain) before starting a session.",
+  {
+    target: z.string().describe("Origin to proxy, e.g. https://accounts.skilljar.com"),
+    port: z.number().optional().describe("Port to use — auto-assigned starting at 9989 if omitted"),
+  },
+  async ({ target, port }) => {
+    try {
+      const assignedPort = await addTargetOrigin(target, port);
+      const activeTargets = getActiveTargets();
+      const list = activeTargets.map(t => `  http://localhost:${t.port} → ${t.origin}`).join("\n");
+      return {
+        content: [{
+          type: "text",
+          text: `Target added: http://localhost:${assignedPort} → ${target}\n\nAll active proxies:\n${list}`,
+        }],
+      };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error adding target: ${e.message}` }] };
+    }
+  }
+);
+
+// ----- remove_target ------------------------------------------------------
+
+mcp.tool(
+  "remove_target",
+  "Remove a proxy target by port number or origin URL. The primary proxy port is cleared but its server stays running.",
+  {
+    port: z.number().optional().describe("Port number of the target to remove"),
+    target: z.string().optional().describe("Origin URL of the target to remove"),
+  },
+  async ({ port, target }) => {
+    let targetPort = port;
+    if (!targetPort && target) {
+      for (const [p, e] of targets) {
+        if (e.origin === target) { targetPort = p; break; }
+      }
+    }
+    if (!targetPort) {
+      return { content: [{ type: "text", text: "Specify a port or target URL to remove." }] };
+    }
+    try {
+      await removeTargetPort(targetPort);
+      const activeTargets = getActiveTargets();
+      const msg = activeTargets.length > 0
+        ? `Remaining proxies:\n${activeTargets.map(t => `  http://localhost:${t.port} → ${t.origin}`).join("\n")}`
+        : "No active proxies remaining.";
+      return { content: [{ type: "text", text: `Target on port ${targetPort} removed.\n${msg}` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// ----- list_targets -------------------------------------------------------
+
+mcp.tool(
+  "list_targets",
+  "List all active proxy targets with their ports and local URLs.",
+  {},
+  async () => {
+    const activeTargets = getActiveTargets();
+    if (activeTargets.length === 0) {
+      return { content: [{ type: "text", text: "No active proxies. Use start_proxy to begin." }] };
+    }
+    const lines = activeTargets.map(t => `  http://localhost:${t.port} → ${t.origin}`).join("\n");
+    return { content: [{ type: "text", text: `Active proxies:\n${lines}` }] };
   }
 );
 
@@ -562,7 +787,7 @@ mcp.tool(
 
 mcp.tool(
   "list_userstyles",
-  "Scan a directory for .user.css files and return their metadata",
+  "Scan a directory for .user.css files and return their metadata. Always call this first to get the correct absolute path before switching themes.",
   {
     directory: z
       .string()
@@ -585,11 +810,19 @@ mcp.tool(
       try {
         const raw = await fs.promises.readFile(path.join(dir, file), "utf8");
         const meta = parseMetadata(raw);
-        results.push({ file, path: path.join(dir, file), name: meta.name || file, version: meta.version || "", description: meta.description || "" });
+        results.push({
+          file,
+          path: path.join(dir, file),
+          name: meta.name || file,
+          version: meta.version || "",
+          description: meta.description || "",
+        });
       } catch {
         results.push({ file, error: "Could not read file" });
       }
     }
+    lastScanDir = dir;
+    lastScanFiles = results;
     return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
   }
 );
@@ -616,21 +849,26 @@ mcp.tool(
 
 mcp.tool(
   "get_current_theme",
-  "Return the currently active theme name and file path, plus the proxy target. Use this to understand what theme is loaded before making changes.",
+  "Return the currently active theme name and file path, plus all active proxy targets. Use this to understand the current state before making changes.",
   {},
   async () => {
+    const activeTargets = getActiveTargets();
+    const targetList = activeTargets.length > 0
+      ? activeTargets.map(t => `  http://localhost:${t.port} → ${t.origin}`).join("\n")
+      : "  (none — panel-only mode)";
+
     if (!themeName && !themeFile) {
       return {
         content: [{
           type: "text",
-          text: `No theme loaded.\nProxy target: ${targetOrigin || "(none — panel-only mode)"}`,
+          text: `No theme loaded.\n\nActive proxies:\n${targetList}`,
         }],
       };
     }
     return {
       content: [{
         type: "text",
-        text: `Active theme: ${themeName}\nFile: ${themeFile}\nProxy target: ${targetOrigin || "(none — panel-only mode)"}`,
+        text: `Active theme: ${themeName}\nFile: ${themeFile}\n\nActive proxies:\n${targetList}`,
       }],
     };
   }
@@ -640,15 +878,15 @@ mcp.tool(
 
 mcp.tool(
   "stop_proxy",
-  "Deactivate the reverse proxy — clears the target and theme. The panel remains available at /__panel__.",
+  "Deactivate all reverse proxies — clears all targets and the theme. The panel remains available at /__panel__.",
   {},
   async () => {
-    setTarget(null);
+    await stopAllTargets();
     resetState();
     return {
       content: [{
         type: "text",
-        text: `Proxy stopped. Panel still available at http://localhost:${PORT}/__panel__`,
+        text: `All proxies stopped. Panel still available at http://localhost:${PORT}/__panel__`,
       }],
     };
   }

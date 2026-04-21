@@ -344,9 +344,13 @@
   </div>
 
   <!-- Status -->
-  <div class="status-bar" id="statusBar">
-    <div class="status-dot off" id="statusDot"></div>
-    <span class="status-target" id="statusTarget" style="color:var(--text-muted);font-style:italic;">Not running</span>
+  <div class="status-bar" id="statusBar" style="align-items:flex-start;">
+    <div id="targetsList" style="flex:1;display:flex;flex-direction:column;gap:8px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="status-dot off"></div>
+        <span style="color:var(--text-muted);font-style:italic;font-size:13px;">Not running</span>
+      </div>
+    </div>
     <span class="status-port" id="statusPort">:9988</span>
   </div>
 
@@ -364,6 +368,20 @@
         <button class="btn-primary" id="startBtn" style="padding:9px 20px;font-size:14px;">Start Proxy</button>
         <span style="font-size:12px;color:var(--text-muted)">then navigate to <code style="background:var(--bg);padding:2px 6px;border-radius:4px;">http://localhost:<span id="startPort">9988</span></code></span>
       </div>
+    </div>
+  </div>
+
+  <!-- Add Target (shown when proxy is running) -->
+  <div class="card" id="addTargetCard" style="display:none;">
+    <div class="card-title">Add Target</div>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+      Add another domain on its own port — all targets share the same theme.
+      Register subdomains <em>before</em> navigating so login redirects stay proxied.
+    </p>
+    <div style="display:flex;gap:8px;">
+      <input type="text" id="addTargetUrl" placeholder="https://accounts.example.com" autocomplete="off">
+      <input type="text" id="addTargetPort" placeholder="Port (auto)" style="width:130px;flex:none;" autocomplete="off">
+      <button class="btn-primary" id="addTargetBtn">Add</button>
     </div>
   </div>
 
@@ -406,8 +424,8 @@
 
   <!-- Footer (shown only when running) -->
   <div class="footer" id="footer" style="display:none;">
-    <a class="footer-link" id="siteLink" href="/" target="_blank">Open proxied site ↗</a>
-    <button class="btn-danger btn-sm" id="stopBtn">Stop Proxy</button>
+    <div id="siteLinks" style="display:flex;gap:16px;flex-wrap:wrap;"></div>
+    <button class="btn-danger btn-sm" id="stopBtn">Stop All</button>
   </div>
 
 </div>
@@ -465,27 +483,61 @@ async function api(method, endpoint, body) {
 
 // ---- Status polling ----
 
+function renderTargetsList(targetsList) {
+  const container = document.getElementById("targetsList");
+  if (!targetsList || targetsList.length === 0) {
+    container.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="status-dot off"></div>
+        <span style="color:var(--text-muted);font-style:italic;font-size:13px;">Not running</span>
+      </div>`;
+    return;
+  }
+  container.innerHTML = targetsList.map(t => `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <div class="status-dot"></div>
+      <span class="status-port" style="margin-left:0;">:${esc(String(t.port))}</span>
+      <span class="status-target">${esc(t.origin)}</span>
+      <a href="${esc(t.url)}/" target="_blank" style="font-size:12px;color:var(--text-muted);margin-left:4px;">Open ↗</a>
+      <button class="btn-ghost btn-sm" style="margin-left:auto;" onclick="removeTarget(${t.port})">Remove</button>
+    </div>`).join(`<div style="height:4px;"></div>`);
+}
+
+function renderSiteLinks(targetsList) {
+  const container = document.getElementById("siteLinks");
+  if (!container) return;
+  if (!targetsList || targetsList.length === 0) { container.innerHTML = ""; return; }
+  container.innerHTML = targetsList.map(t =>
+    `<a class="footer-link" href="${esc(t.url)}/" target="_blank">:${t.port} Open ↗</a>`
+  ).join("");
+}
+
+async function removeTarget(port) {
+  const data = await api("POST", "/remove-target", { port });
+  if (data) {
+    toast(`Target :${port} removed`);
+    await refreshStatus();
+  }
+}
+
 async function refreshStatus() {
   const data = await api("GET", "/status");
   if (!data) return;
 
-  const running = !!data.target;
+  const running = data.targets && data.targets.length > 0;
 
   // Status bar
-  document.getElementById("statusDot").className = running ? "status-dot" : "status-dot off";
-  document.getElementById("statusTarget").textContent = running ? data.target : "Not running";
-  document.getElementById("statusTarget").style.cssText = running
-    ? "color:var(--accent-hover);font-style:normal"
-    : "color:var(--text-muted);font-style:italic";
+  renderTargetsList(data.targets || []);
   document.getElementById("statusPort").textContent = `:${data.port}`;
   document.getElementById("startPort").textContent = data.port;
 
   // Show/hide sections
-  document.getElementById("startCard").style.display    = running ? "none"  : "block";
-  document.getElementById("themeCard").style.display    = running ? "block" : "none";
-  document.getElementById("cssCard").style.display      = running ? "block" : "none";
-  document.getElementById("snippetsCard").style.display = running ? "block" : "none";
-  document.getElementById("footer").style.display       = running ? "flex"  : "none";
+  document.getElementById("startCard").style.display     = running ? "none"  : "block";
+  document.getElementById("addTargetCard").style.display = running ? "block" : "none";
+  document.getElementById("themeCard").style.display     = running ? "block" : "none";
+  document.getElementById("cssCard").style.display       = running ? "block" : "none";
+  document.getElementById("snippetsCard").style.display  = running ? "block" : "none";
+  document.getElementById("footer").style.display        = running ? "flex"  : "none";
 
   // Restore scan dir + theme list from server state (persists across panel refreshes)
   if (data.scanDir) {
@@ -512,6 +564,7 @@ async function refreshStatus() {
       clearBtn.disabled = true;
       refreshBtn.disabled = true;
     }
+    renderSiteLinks(data.targets);
     renderSnippets(data.snippets);
   }
 }
@@ -553,9 +606,36 @@ document.getElementById("startBtn").addEventListener("click", async () => {
   if (data) {
     addTargetHistory(target);
     LS.set("si_target", target);
-    toast(`Proxy active → ${data.target}`);
+    const firstTarget = data.targets && data.targets[0];
+    toast(`Proxy active → ${firstTarget ? firstTarget.origin : target}`);
     await refreshStatus();
   }
+});
+
+// ---- Add target ----
+
+document.getElementById("addTargetBtn").addEventListener("click", async () => {
+  const target = document.getElementById("addTargetUrl").value.trim();
+  if (!target) { toast("Enter a target URL", "error"); return; }
+  const portVal = document.getElementById("addTargetPort").value.trim();
+  const port = portVal ? parseInt(portVal, 10) : undefined;
+  if (portVal && isNaN(port)) { toast("Port must be a number", "error"); return; }
+  const btn = document.getElementById("addTargetBtn");
+  btn.disabled = true;
+  btn.textContent = "Adding…";
+  const data = await api("POST", "/add-target", { target, port });
+  btn.disabled = false;
+  btn.textContent = "Add";
+  if (data) {
+    toast(`:${data.port} → ${data.target}`);
+    document.getElementById("addTargetUrl").value = "";
+    document.getElementById("addTargetPort").value = "";
+    await refreshStatus();
+  }
+});
+
+document.getElementById("addTargetUrl").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("addTargetBtn").click();
 });
 
 document.getElementById("startTarget").addEventListener("keydown", (e) => {
