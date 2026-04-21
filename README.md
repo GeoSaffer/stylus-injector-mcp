@@ -80,23 +80,32 @@ The panel uses a REST API at `/__api__/*` on the same port. Every operation avai
 ```
 1. list_userstyles({ directory: "C:/themes" })
    → Returns available .user.css files with names and metadata
+     Always use the returned "path" field in subsequent calls — never guess paths.
 
 2. start_proxy({ target: "https://example.com", userstyle: "C:/themes/dark.user.css" })
    → Proxy active: http://localhost:9988 → https://example.com
      Control panel: http://localhost:9988/__panel__
 
-3. Navigate Cursor browser to http://localhost:9988
+3. browser_navigate({ url: "http://localhost:9988/" })
+   → Page loads through proxy with theme already injected and SSE live-swap active
 
-4. switch_theme({ userstyle: "C:/themes/blue.user.css" })
+4. Inspect real HTML class names before writing CSS (third-party sites only)
+   → Fetch the proxied HTML and extract actual selectors:
+
+     $r = Invoke-WebRequest "http://localhost:9988/" -UseBasicParsing
+     [regex]::Matches($r.Content, '<div[^>]+class="[^"]{10,60}"') |
+       Select-Object -First 20 | ForEach-Object { $_.Value }
+
+5. switch_theme({ userstyle: "C:/themes/blue.user.css" })
    → Switched to theme: Blue Theme.  (updates live — no page reload)
 
-5. inject_css({ css: "body { background: #0f0f17 !important; }", id: "debug" })
+6. inject_css({ css: "body { background: #0f0f17 !important; }", id: "debug" })
    → Injected snippet "debug".  (applies live — no page reload)
 
-6. refresh_theme()
+7. refresh_theme()
    → Cycles theme off then on to force a full CSS re-render
 
-7. stop_proxy()
+8. stop_proxy()
    → Proxy stopped. Port 9988 freed.
 ```
 
@@ -117,11 +126,25 @@ If you prefer not to use `npm run setup`, merge this into `~/.cursor/mcp.json`:
 
 Replace the path with wherever you cloned the repo.
 
-## CSS parsing
+## `.user.css` format
 
-The parser handles standard Stylus `.user.css` format:
+Every theme file must begin with a `==UserStyle==` metadata block:
 
-- Strips `==UserStyle==` metadata blocks
+```css
+/* ==UserStyle==
+@name         My Theme Name
+@description  What this theme does
+@version      1.0.0
+@author       Your Name
+@match        *://example.com/*
+==/UserStyle== */
+
+/* CSS rules below — this is what gets injected */
+body { background: #111 !important; }
+```
+
+The parser automatically:
+- Strips the `==UserStyle==` metadata block
 - Unwraps `@-moz-document` wrappers
 - Outputs raw CSS rules ready for injection
 
@@ -162,6 +185,32 @@ package.json   Dependencies: @modelcontextprotocol/sdk, zod
   skills/
     stylus-injector-mcp/
       SKILL.md   Cursor Agent Skill for this MCP
+```
+
+## Troubleshooting
+
+### Proxy appears active but CSS is not injecting
+
+A stale Node.js process from a previous session may be holding port `9988`. Check:
+
+```powershell
+netstat -ano | findstr ":9988"
+```
+
+The PID shown should match the current Cursor MCP process. If it belongs to an old process, kill it then reload MCP servers in Cursor: **Settings → MCP → Reload** on `stylus-injector`.
+
+### Styles applied but not rendering visually
+
+Call `refresh_theme()` — this cycles the theme off then back on, forcing a full browser style recalculation. Do not ask the user to reload the page.
+
+### CSS selectors not matching
+
+Inspect the actual HTML served by the proxy before writing selectors. Generic names like `.card` or `main` rarely exist on third-party sites:
+
+```powershell
+$r = Invoke-WebRequest "http://localhost:9988/" -UseBasicParsing
+[regex]::Matches($r.Content, '<div[^>]+class="[^"]{10,60}"') |
+  Select-Object -First 20 | ForEach-Object { $_.Value }
 ```
 
 ## Requirements
