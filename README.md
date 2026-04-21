@@ -78,19 +78,25 @@ The panel uses a REST API at `/__api__/*` on the same port. Every operation avai
 ## Usage example
 
 ```
-1. start_proxy({ target: "https://example.com", userstyle: "C:/themes/dark.user.css" })
-   → Proxy started: http://localhost:9988 → https://example.com
+1. list_userstyles({ directory: "C:/themes" })
+   → Returns available .user.css files with names and metadata
+
+2. start_proxy({ target: "https://example.com", userstyle: "C:/themes/dark.user.css" })
+   → Proxy active: http://localhost:9988 → https://example.com
      Control panel: http://localhost:9988/__panel__
 
-2. Navigate Cursor browser to http://localhost:9988
+3. Navigate Cursor browser to http://localhost:9988
 
-3. switch_theme({ userstyle: "C:/themes/blue.user.css" })
-   → Switched to theme: Blue Theme. Refresh the page.
+4. switch_theme({ userstyle: "C:/themes/blue.user.css" })
+   → Switched to theme: Blue Theme.  (updates live — no page reload)
 
-4. inject_css({ css: "body { background: #0f0f17 !important; }", id: "debug" })
-   → Injected snippet "debug". Refresh the page.
+5. inject_css({ css: "body { background: #0f0f17 !important; }", id: "debug" })
+   → Injected snippet "debug".  (applies live — no page reload)
 
-5. stop_proxy()
+6. refresh_theme()
+   → Cycles theme off then on to force a full CSS re-render
+
+7. stop_proxy()
    → Proxy stopped. Port 9988 freed.
 ```
 
@@ -129,6 +135,22 @@ The parser handles standard Stylus `.user.css` format:
 | **Security headers** | CSP, HSTS, X-Frame-Options removed for local dev |
 | **Decompression** | gzip / brotli / deflate handled transparently |
 
+## Cursor Agent Skill
+
+A Cursor Agent Skill is bundled at `.cursor/skills/stylus-injector-mcp/SKILL.md`. It teaches agents the full tool set, typical workflow, and key behaviours so they can operate this MCP without manual guidance.
+
+To make the skill available across **all your projects** (not just this repo), copy it to your personal skills folder:
+
+```bash
+# macOS / Linux
+cp -r .cursor/skills/stylus-injector-mcp ~/.cursor/skills/
+
+# Windows (PowerShell)
+Copy-Item -Recurse .cursor\skills\stylus-injector-mcp ~\.cursor\skills\
+```
+
+Once in `~/.cursor/skills/`, Cursor will automatically apply the skill whenever you mention themes, proxying a site, `.user.css` files, or the stylus injector in any project.
+
 ## Project structure
 
 ```
@@ -136,6 +158,10 @@ index.js       MCP server + reverse proxy + API routes
 panel.html     Visual control panel (served at /__panel__)
 setup.js       Auto-registers in ~/.cursor/mcp.json
 package.json   Dependencies: @modelcontextprotocol/sdk, zod
+.cursor/
+  skills/
+    stylus-injector-mcp/
+      SKILL.md   Cursor Agent Skill for this MCP
 ```
 
 ## Requirements
