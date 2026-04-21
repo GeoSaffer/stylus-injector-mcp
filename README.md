@@ -17,6 +17,19 @@ npm run setup
 
 > **Important:** After installing Git or Node.js, and after running `npm run setup`, **fully quit and relaunch Cursor** — not just "Reload MCP servers". Cursor inherits its PATH at launch time, so it won't see newly installed tools until it restarts.
 
+## Updating
+
+Pull the latest code, then reload the MCP server in Cursor so the new `index.js` is picked up:
+
+```bash
+cd stylus-injector-mcp
+git pull
+```
+
+Then in Cursor: **Settings → MCP → `stylus-injector` → Reload** (or fully restart Cursor).
+
+> No need to re-run `npm run setup` or `npm install` unless the release notes mention new dependencies.
+
 ## Live CSS hot-swap
 
 Every proxied HTML page receives an injected `<script>` that opens a Server-Sent Events connection back to the proxy (`/__api__/events`). When a theme or snippet changes, the server broadcasts the new CSS over that connection and the browser updates the `<style>` tags in place — **no page reload needed**, scroll position and page state are preserved.
@@ -207,6 +220,15 @@ package.json   Dependencies: @modelcontextprotocol/sdk, zod
 ```
 
 ## Troubleshooting
+
+### First, make sure you are on the latest version
+
+```bash
+cd stylus-injector-mcp
+git pull
+```
+
+Then reload `stylus-injector` in Cursor (**Settings → MCP → Reload**) so the updated `index.js` is active.
 
 ### Proxy appears active but CSS is not injecting
 
