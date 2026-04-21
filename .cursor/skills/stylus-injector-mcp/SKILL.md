@@ -85,17 +85,25 @@ switch_theme({ userstyle: "" })
 
 After the proxy is running, fetch the proxied HTML and extract real selectors:
 
-```powershell
-$r = Invoke-WebRequest "http://localhost:9988/" -UseBasicParsing
-$html = $r.Content
+**macOS / Linux**
+```bash
+# Body tag
+curl -s "http://localhost:9988/" | grep -oE '<body[^>]*>' | head -1
 
-# Check the body tag
+# Meaningful div class names
+curl -s "http://localhost:9988/" | grep -oE '<div[^>]+class="[^"]{10,60}"' | head -20
+```
+
+**Windows (PowerShell)**
+```powershell
+$html = (Invoke-WebRequest "http://localhost:9988/" -UseBasicParsing).Content
+
+# Body tag
 [regex]::Match($html, '<body[^>]*>').Value
 
-# Find meaningful div class names
+# Meaningful div class names
 [regex]::Matches($html, '<div[^>]+class="[^"]{10,60}"') |
-  Select-Object -First 20 |
-  ForEach-Object { $_.Value }
+  Select-Object -First 20 | ForEach-Object { $_.Value }
 ```
 
 Write CSS using the real class names found, then apply:

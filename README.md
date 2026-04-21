@@ -90,10 +90,12 @@ The panel uses a REST API at `/__api__/*` on the same port. Every operation avai
    → Page loads through proxy with theme already injected and SSE live-swap active
 
 4. Inspect real HTML class names before writing CSS (third-party sites only)
-   → Fetch the proxied HTML and extract actual selectors:
+   → macOS / Linux:
+     curl -s "http://localhost:9988/" | grep -oE '<div[^>]+class="[^"]{10,60}"' | head -20
 
-     $r = Invoke-WebRequest "http://localhost:9988/" -UseBasicParsing
-     [regex]::Matches($r.Content, '<div[^>]+class="[^"]{10,60}"') |
+   → Windows (PowerShell):
+     $html = (Invoke-WebRequest "http://localhost:9988/" -UseBasicParsing).Content
+     [regex]::Matches($html, '<div[^>]+class="[^"]{10,60}"') |
        Select-Object -First 20 | ForEach-Object { $_.Value }
 
 5. switch_theme({ userstyle: "C:/themes/blue.user.css" })
@@ -207,9 +209,15 @@ Call `refresh_theme()` — this cycles the theme off then back on, forcing a ful
 
 Inspect the actual HTML served by the proxy before writing selectors. Generic names like `.card` or `main` rarely exist on third-party sites:
 
+```bash
+# macOS / Linux
+curl -s "http://localhost:9988/" | grep -oE '<div[^>]+class="[^"]{10,60}"' | head -20
+```
+
 ```powershell
-$r = Invoke-WebRequest "http://localhost:9988/" -UseBasicParsing
-[regex]::Matches($r.Content, '<div[^>]+class="[^"]{10,60}"') |
+# Windows (PowerShell)
+$html = (Invoke-WebRequest "http://localhost:9988/" -UseBasicParsing).Content
+[regex]::Matches($html, '<div[^>]+class="[^"]{10,60}"') |
   Select-Object -First 20 | ForEach-Object { $_.Value }
 ```
 
