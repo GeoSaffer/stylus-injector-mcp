@@ -16,9 +16,11 @@ Reverse proxy on `localhost:9988` — injects `.user.css` themes into every HTML
 
 ---
 
-## Scenario A — Start fresh with a theme
+## Scenario A — Set a theme folder, then browse and switch freely
 
-**Step 1: Find available themes**
+This is the preferred workflow when the user has a folder of themes. Scan the folder once to register it, start the proxy without locking in a theme, then switch freely.
+
+**Step 1: Scan the folder to discover all available themes**
 
 ```
 list_userstyles({ directory: "C:/Users/dave/themes" })
@@ -36,14 +38,15 @@ Response:
 
 > **IMPORTANT:** Always use the `path` field — the full absolute path — when passing a theme to any tool. Never use `name` or `file`.
 
-**Step 2: Start the proxy with a theme**
+Keep the `files` array in memory for this session — you will use `path` values to switch themes.
+
+**Step 2: Start the proxy (no theme required yet)**
 
 ```
-start_proxy({
-  target: "https://example.com",
-  userstyle: "C:/Users/dave/themes/dark.user.css"
-})
+start_proxy({ target: "https://example.com" })
 ```
+
+`userstyle` is optional. You can start without a theme and apply one after.
 
 **Step 3: Navigate the browser to the proxy**
 
@@ -53,9 +56,38 @@ Use the browser tool directly — do not just tell the user:
 browser_navigate({ url: "http://localhost:9988/" })
 ```
 
+**Step 4: Apply any theme from the folder using its `path`**
+
+```
+switch_theme({ userstyle: "C:/Users/dave/themes/dark.user.css" })
+```
+
+**Step 5: Switch to any other theme in the folder at any time**
+
+```
+switch_theme({ userstyle: "C:/Users/dave/themes/blue.user.css" })
+```
+
+The browser updates **instantly** every time — no reload needed.
+
 ---
 
-## Scenario B — Switch theme while proxy is running
+## Scenario B — Start with a specific theme already loaded
+
+If the user wants a particular theme active from the moment the proxy starts:
+
+```
+start_proxy({
+  target: "https://example.com",
+  userstyle: "C:/Users/dave/themes/dark.user.css"
+})
+```
+
+Still call `list_userstyles` first to get the correct `path` value — never guess it.
+
+---
+
+## Scenario C — Switch theme while proxy is running
 
 **Step 1: Check what is currently active**
 
@@ -63,7 +95,7 @@ browser_navigate({ url: "http://localhost:9988/" })
 get_current_theme()
 ```
 
-**Step 2: Switch to a different theme using the `path` from `list_userstyles`**
+**Step 2: Switch using the `path` from the earlier `list_userstyles` call**
 
 ```
 switch_theme({ userstyle: "C:/Users/dave/themes/blue.user.css" })
@@ -79,7 +111,7 @@ switch_theme({ userstyle: "" })
 
 ---
 
-## Scenario C — Writing CSS for a third-party site
+## Scenario D — Writing CSS for a third-party site
 
 **Always inspect real class names before writing CSS.** Generic selectors like `.card` or `main` rarely exist on third-party sites. Guessing silently does nothing.
 
@@ -114,7 +146,7 @@ switch_theme({ userstyle: "C:/path/to/your-theme.user.css" })
 
 ---
 
-## Scenario D — User hasn't said where their themes are
+## Scenario E — User hasn't said where their themes are
 
 Ask: *"What folder are your `.user.css` theme files in?"*
 
@@ -122,7 +154,7 @@ Once they give the path, run `list_userstyles` with it, then proceed as Scenario
 
 ---
 
-## Scenario E — Inject one-off CSS without a theme file
+## Scenario F — Inject one-off CSS without a theme file
 
 ```
 inject_css({
@@ -136,7 +168,7 @@ inject_css({
 
 ---
 
-## Scenario F — Styles not visually updating
+## Scenario G — Styles not visually updating
 
 ```
 refresh_theme()
@@ -146,7 +178,7 @@ Cycles the theme off → waits 50 ms → back on. Forces full style recalculatio
 
 ---
 
-## Scenario G — Proxy appears active but CSS is not injecting
+## Scenario H — Proxy appears active but CSS is not injecting
 
 A stale Node.js process from a previous session may be holding port `9988`. Check:
 
@@ -183,8 +215,8 @@ The proxy strips the metadata block automatically — only the raw CSS rules are
 
 | Tool | Required params | Notes |
 |---|---|---|
-| `list_userstyles` | `directory` | Returns `{ file, path, name, version }` per theme. Always use `path` in subsequent calls. |
-| `start_proxy` | `target` | `target` = full origin e.g. `https://example.com`. `userstyle` = absolute `path` from `list_userstyles`. |
+| `list_userstyles` | `directory` | Scans folder, registers it as the active theme folder, returns `{ file, path, name, version }` per theme. Always use `path` in subsequent calls. Call this before `start_proxy` to discover themes you can switch between freely. |
+| `start_proxy` | `target` | `target` = full origin e.g. `https://example.com`. `userstyle` is **optional** — omit it to start without a theme and apply one later via `switch_theme`. |
 | `switch_theme` | `userstyle` | Absolute path to `.user.css`, or `""` to clear. Hot-swaps live. |
 | `refresh_theme` | — | Force re-render. Use when styles aren't applying visually. |
 | `inject_css` | `css` | Raw CSS string. Optional `id` to replace a previous snippet. |
@@ -195,10 +227,12 @@ The proxy strips the metadata block automatically — only the raw CSS rules are
 
 ## Rules
 
-1. **Always use `path`** from `list_userstyles` — never guess or hardcode a file path.
-2. **Always call `get_current_theme`** before switching so you know the current state.
-3. **If you don't know the theme directory**, ask the user before calling any tool.
-4. **Navigate the browser yourself** using `browser_navigate({ url: "http://localhost:9988/" })` — do not just tell the user to do it.
-5. **After `switch_theme` or `inject_css` the change is already live** — do not ask the user to reload.
-6. **If styles aren't showing**, call `refresh_theme()` — do not ask the user to reload.
-7. **Inspect real HTML before writing CSS** — use the PowerShell snippet in Scenario C to find actual class names.
+1. **Always call `list_userstyles` first** — it registers the folder AND gives you the `path` values needed for all other calls.
+2. **Always use `path`** from `list_userstyles` results — never guess or hardcode a file path.
+3. **`userstyle` is optional in `start_proxy`** — prefer starting without it and using `switch_theme` to apply themes from the scanned folder.
+4. **Always call `get_current_theme`** before switching so you know the current state.
+5. **If you don't know the theme directory**, ask the user before calling any tool.
+6. **Navigate the browser yourself** using `browser_navigate({ url: "http://localhost:9988/" })` — do not just tell the user to do it.
+7. **After `switch_theme` or `inject_css` the change is already live** — do not ask the user to reload.
+8. **If styles aren't showing**, call `refresh_theme()` — do not ask the user to reload.
+9. **Inspect real HTML before writing CSS** — use the platform snippet in Scenario D to find actual class names.

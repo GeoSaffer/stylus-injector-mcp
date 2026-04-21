@@ -41,10 +41,10 @@ Cursor Browser  ──►  localhost:9988  ──►  https://any-site.com
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `start_proxy` | `target` (required), `userstyle` (optional), `port` (optional, default `9988`) | Start the reverse proxy, optionally loading a `.user.css` theme |
-| `switch_theme` | `userstyle` (required, `""` to clear) | Hot-swap the active theme — updates live in the browser with no page reload |
+| `list_userstyles` | `directory` (required) | Scan a folder for `.user.css` files, register it as the active theme folder, and return metadata. Always call this first — use the returned `path` values in all other calls. |
+| `start_proxy` | `target` (required), `userstyle` (optional), `port` (optional, default `9988`) | Start the reverse proxy. `userstyle` is optional — omit it to start without a theme and apply one later via `switch_theme`. |
+| `switch_theme` | `userstyle` (required, `""` to clear) | Hot-swap to any theme using its `path` from `list_userstyles` — updates live, no page reload |
 | `inject_css` | `css` (required), `id` (optional) | Append ad-hoc CSS on top of the current theme |
-| `list_userstyles` | `directory` (required) | Scan a directory for `.user.css` files and return metadata |
 | `refresh_theme` | — | Cycle the active theme off then on to force a full CSS re-render |
 | `get_current_theme` | — | Return the active theme name, file path, and proxy target |
 | `stop_proxy` | — | Shut down the proxy and free the port |
@@ -79,17 +79,24 @@ The panel uses a REST API at `/__api__/*` on the same port. Every operation avai
 
 ```
 1. list_userstyles({ directory: "C:/themes" })
-   → Returns available .user.css files with names and metadata
+   → Registers the folder and returns all available themes with full paths.
      Always use the returned "path" field in subsequent calls — never guess paths.
+     [ { "file": "dark.user.css", "path": "C:/themes/dark.user.css", "name": "Dark Theme" }, ... ]
 
-2. start_proxy({ target: "https://example.com", userstyle: "C:/themes/dark.user.css" })
+2. start_proxy({ target: "https://example.com" })
    → Proxy active: http://localhost:9988 → https://example.com
-     Control panel: http://localhost:9988/__panel__
+     userstyle is optional — start without a theme and apply one after via switch_theme.
 
 3. browser_navigate({ url: "http://localhost:9988/" })
-   → Page loads through proxy with theme already injected and SSE live-swap active
+   → Page loads through proxy with SSE live-swap active
 
-4. Inspect real HTML class names before writing CSS (third-party sites only)
+4. switch_theme({ userstyle: "C:/themes/dark.user.css" })
+   → Dark Theme applied live — no page reload needed
+
+5. switch_theme({ userstyle: "C:/themes/blue.user.css" })
+   → Switch to any other theme in the folder at any time — live, no reload
+
+6. Inspect real HTML class names before writing CSS (third-party sites only)
    → macOS / Linux:
      curl -s "http://localhost:9988/" | grep -oE '<div[^>]+class="[^"]{10,60}"' | head -20
 
@@ -98,16 +105,13 @@ The panel uses a REST API at `/__api__/*` on the same port. Every operation avai
      [regex]::Matches($html, '<div[^>]+class="[^"]{10,60}"') |
        Select-Object -First 20 | ForEach-Object { $_.Value }
 
-5. switch_theme({ userstyle: "C:/themes/blue.user.css" })
-   → Switched to theme: Blue Theme.  (updates live — no page reload)
-
-6. inject_css({ css: "body { background: #0f0f17 !important; }", id: "debug" })
+7. inject_css({ css: "body { background: #0f0f17 !important; }", id: "debug" })
    → Injected snippet "debug".  (applies live — no page reload)
 
-7. refresh_theme()
+8. refresh_theme()
    → Cycles theme off then on to force a full CSS re-render
 
-8. stop_proxy()
+9. stop_proxy()
    → Proxy stopped. Port 9988 freed.
 ```
 
