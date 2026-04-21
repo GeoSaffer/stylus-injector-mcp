@@ -12,59 +12,128 @@ description: >-
 
 # Stylus Injector MCP
 
-A local HTTP reverse proxy on `localhost:9988` that injects `.user.css` themes into every HTML response. Theme and snippet changes are broadcast via SSE and hot-swapped in the browser — no page reload required.
+Reverse proxy on `localhost:9988` — injects `.user.css` themes into every HTML page. Changes hot-swap live via SSE; no page reload needed.
 
-## MCP tools
+---
 
-| Tool | Key params | Purpose |
+## Scenario A — Start fresh with a theme
+
+**Step 1: Find available themes**
+
+```
+list_userstyles({ directory: "C:/Users/dave/themes" })
+```
+
+Response:
+```json
+{
+  "files": [
+    { "file": "dark.user.css",  "path": "C:/Users/dave/themes/dark.user.css",  "name": "Dark Theme", "version": "1.2" },
+    { "file": "blue.user.css",  "path": "C:/Users/dave/themes/blue.user.css",  "name": "Blue Slate", "version": "1.0" }
+  ]
+}
+```
+
+> **IMPORTANT:** Always use the `path` field — the full absolute path — when passing a theme to any tool. Never use `name` or `file`.
+
+**Step 2: Start the proxy with a theme**
+
+```
+start_proxy({
+  target: "https://example.com",
+  userstyle: "C:/Users/dave/themes/dark.user.css"
+})
+```
+
+Response: `Proxy active: http://localhost:9988 → https://example.com  Theme: Dark Theme`
+
+**Step 3: Tell the user to open the browser**
+
+Say: *"Navigate the Cursor embedded browser to `http://localhost:9988`"*
+
+---
+
+## Scenario B — Switch theme while proxy is running
+
+**Step 1: Check what is currently active**
+
+```
+get_current_theme()
+```
+
+Response: `Active theme: Dark Theme  File: C:/Users/dave/themes/dark.user.css  Proxy target: https://example.com`
+
+**Step 2: Switch to a different theme**
+
+Use the `path` from the `list_userstyles` result:
+
+```
+switch_theme({ userstyle: "C:/Users/dave/themes/blue.user.css" })
+```
+
+Response: `Switched to theme: Blue Slate.`
+
+The browser updates **instantly** — no page reload. Tell the user to look at the browser now.
+
+**Step 3: Clear the theme entirely (optional)**
+
+```
+switch_theme({ userstyle: "" })
+```
+
+---
+
+## Scenario C — User hasn't said where their themes are
+
+Ask: *"What folder are your `.user.css` theme files in?"*
+
+Once they give the path, run `list_userstyles` with it, then proceed as Scenario A.
+
+---
+
+## Scenario D — Inject one-off CSS without a theme file
+
+```
+inject_css({
+  css: "body { background: #0f0f17 !important; font-size: 16px !important; }",
+  id: "my-tweak"
+})
+```
+
+- The `id` is optional but reusing it replaces the previous snippet (good for iterating).
+- Snippets stack **on top of** the theme — they don't replace it.
+- Call again with the same `id` and new CSS to update it live.
+
+---
+
+## Scenario E — Styles not visually updating
+
+```
+refresh_theme()
+```
+
+This cycles the theme off → waits 50 ms → back on. Forces the browser to fully recalculate styles.
+
+---
+
+## Tool reference
+
+| Tool | Required params | Notes |
 |---|---|---|
-| `list_userstyles` | `directory` | Scan a folder for `.user.css` files — always run this first to discover available themes |
-| `start_proxy` | `target`, `userstyle?` | Start the proxy. `target` is the full origin (e.g. `https://example.com`). Optionally load a theme at start |
-| `switch_theme` | `userstyle` | Hot-swap theme live. Pass `""` to clear |
-| `refresh_theme` | — | Cycle the theme off then on to force a full CSS re-render (use when styles aren't visually applying) |
-| `inject_css` | `css`, `id?` | Inject ad-hoc CSS on top of the current theme. Reuse the same `id` to replace a previous snippet |
-| `get_current_theme` | — | Return active theme name, file path, and proxy target — call this before making changes |
-| `stop_proxy` | — | Stop the proxy (panel stays available) |
+| `list_userstyles` | `directory` | Returns array of `{ file, path, name, version }`. Use `path` in all other calls. |
+| `start_proxy` | `target` | `target` = full origin e.g. `https://example.com`. `userstyle` = absolute path from `list_userstyles`. |
+| `switch_theme` | `userstyle` | Absolute path to `.user.css`, or `""` to clear. Hot-swaps live. |
+| `refresh_theme` | — | Force re-render. Use when styles aren't applying visually. |
+| `inject_css` | `css` | Raw CSS string. Optional `id` to replace a previous snippet. |
+| `get_current_theme` | — | Returns active theme name + file path + proxy target. Always call this before switching. |
+| `stop_proxy` | — | Stops proxy. Panel stays up at `/__panel__`. |
 
-## Typical workflow
+---
 
-```
-1. list_userstyles({ directory: "C:/path/to/themes" })
-   → See what .user.css files are available
+## Rules
 
-2. start_proxy({ target: "https://example.com", userstyle: "C:/path/to/dark.user.css" })
-   → Proxy active: http://localhost:9988 → https://example.com
-
-3. Tell the user to navigate the Cursor browser to http://localhost:9988
-
-4. switch_theme({ userstyle: "C:/path/to/other.user.css" })
-   → Theme updates live in the browser
-
-5. inject_css({ css: "body { font-size: 16px !important; }", id: "font-fix" })
-   → CSS applied live on top of the theme
-
-6. refresh_theme()
-   → Use if a style change isn't visually rendering
-
-7. stop_proxy()
-   → Proxy stopped, port freed
-```
-
-## Key behaviours
-
-- **Live hot-swap** — every proxied HTML page has an SSE listener injected. `switch_theme`, `refresh_theme`, and `inject_css` all push CSS updates instantly without a page reload.
-- **Panel** — always available at `http://localhost:9988/__panel__` even before `start_proxy` is called. The panel persists the last used scan directory and theme list.
-- **Port** — default `9988`. Override with `STYLUS_PORT` env var in `mcp.json`.
-- **CSS parsing** — strips `==UserStyle==` metadata blocks and `@-moz-document` wrappers from `.user.css` files automatically.
-
-## Before switching themes
-
-Always call `get_current_theme` first so you know what is active and can reference it in your response.
-
-## Injecting CSS snippets
-
-```
-inject_css({ css: "nav { display: none !important; }", id: "hide-nav" })
-```
-
-Calling `inject_css` with the same `id` replaces the previous snippet. Snippets stack on top of the theme — they don't replace it.
+1. **Always use `path`** from `list_userstyles` results — never guess a file path.
+2. **Always call `get_current_theme`** before switching so you know the current state.
+3. **If you don't know the theme directory**, ask the user before calling any tool.
+4. **After `switch_theme` or `inject_css`**, tell the user the change is already live — they do not need to reload.
+5. **If styles aren't showing**, call `refresh_theme()` — do not ask the user to reload.
