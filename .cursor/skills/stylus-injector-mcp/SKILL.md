@@ -14,15 +14,29 @@ description: >-
 
 ## START HERE — THE MCP IS ALREADY RUNNING
 
-**Call `get_current_theme` right now.** That tells you everything that is active. Then use the tools below to do what the user asked.
-
-Do not start anything. Do not stop anything. Do not kill anything. Do not restart anything. The MCP server is running, the HTTP proxy is ready, and all tools are available. Just use them.
+**Step 1 — Call `get_current_theme` right now.** Read the response before doing anything else.
 
 ```
 get_current_theme()
 ```
 
-That is always step one.
+**Step 2 — Branch based on what you see:**
+
+**If a proxy is already active** (targets list is not empty):
+→ The proxy is running. Do NOT call `start_proxy` again.
+→ Check if the target matches what the user wants. If yes, go straight to themes.
+→ If the target is wrong: call `stop_proxy`, then start the correct one.
+
+**If no proxy is active** (targets list is empty):
+→ Call `list_userstyles` to find the theme files.
+→ Call `start_proxy` with the correct target.
+→ Navigate the browser to the proxy.
+→ THEN switch to the theme.
+
+**Do not touch the theme until the proxy is confirmed running with the right target.**
+A theme switch before `start_proxy` has no visible effect — the proxy has to be running first for CSS to be injected into pages.
+
+Do not kill anything. Do not restart anything. Just call `get_current_theme` and branch.
 
 ---
 
@@ -74,13 +88,13 @@ If you think the MCP is broken: call `get_current_theme`. That is the diagnostic
 
 ## When something is wrong — fix it with tools, in this order
 
-1. Call `get_current_theme` — understand what is actually active right now
-2. Call `stop_proxy` — clear all state cleanly
-3. Re-run the workflow: `list_userstyles` → `start_proxy` → `switch_theme`
-4. If styles load but aren't rendering visually: call `refresh_theme`
-5. If a newly edited `.user.css` file isn't applying: call `switch_theme` with the same path again
+1. Call `get_current_theme` — read what is actually active. This is the only diagnostic you need.
+2. If the proxy is running but styles look wrong: call `refresh_theme`.
+3. If the wrong theme is loaded: call `switch_theme` with the correct path.
+4. If the proxy is pointing at the wrong target: call `stop_proxy`, then `start_proxy` with the correct one.
+5. If no proxy is running at all: call `list_userstyles`, then `start_proxy`, then `switch_theme`.
 
-That is the entire troubleshooting checklist. Do not go further.
+That is the entire troubleshooting checklist. Do not go further. Do not touch processes.
 
 ---
 
@@ -323,13 +337,14 @@ The proxy strips the metadata block automatically — only the raw CSS is inject
 
 ## Rules
 
-1. **Call `list_userstyles` first** — always, to get the correct `path` values.
-2. **Always use `path`** from `list_userstyles` — never guess or hardcode.
-3. **`userstyle` is optional in `start_proxy`** — start without a theme, apply one later via `switch_theme`.
-4. **Call `get_current_theme` before switching** — know what is active.
-5. **Navigate the browser yourself** with `browser_navigate({ url: "http://localhost:9988/" })` — do not tell the user to do it.
-6. **After `switch_theme` or `inject_css` the change is live** — do not ask the user to reload.
-7. **If styles aren't showing**, call `refresh_theme()` — do not ask the user to reload.
-8. **Inspect real HTML before writing CSS** — use the snippet in Scenario D.
-9. **Register auth subdomains before navigating** — call `add_target` for every domain the site may redirect to before the user starts a session.
-10. **The MCP is already running when you read this** — do not start, stop, restart, or touch it. Call `get_current_theme` to check state, then use the tools.
+1. **Always call `get_current_theme` first** — check if a proxy is already running before doing anything.
+2. **Do not touch themes until the proxy is running** — `switch_theme` before `start_proxy` has no visible effect.
+3. **Call `list_userstyles` before `start_proxy`** — you need the `path` values; never guess or hardcode file paths.
+4. **Always use `path`** from `list_userstyles` results — never use `name` or `file`.
+5. **If a proxy is already running with the right target, do not call `start_proxy` again** — go straight to themes.
+6. **Navigate the browser yourself** with `browser_navigate({ url: "http://localhost:9988/" })` — do not tell the user to do it.
+7. **After `switch_theme` or `inject_css` the change is live** — do not ask the user to reload.
+8. **If styles aren't showing**, call `refresh_theme()` — do not ask the user to reload.
+9. **Inspect real HTML before writing CSS** — use the snippet in Scenario D.
+10. **Register auth subdomains before navigating** — call `add_target` for every domain the site may redirect to, before the user starts a session.
+11. **The MCP is already running when you read this** — do not start, stop, restart, or kill it. Call `get_current_theme` and branch from there.
