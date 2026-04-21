@@ -173,7 +173,7 @@ The parser automatically:
 | **Header rewriting** | `Host`, `Referer`, `Origin` rewritten to match the target |
 | **Redirect rewriting** | `Location` headers rewritten back to `localhost` — across all registered targets |
 | **Cross-domain URL rewriting** | All body URLs (HTML + CSS) rewritten across every registered target — links between main site and auth subdomain stay proxied |
-| **Cookie rewriting** | `domain` and `secure` attributes stripped for localhost |
+| **Cookie rewriting** | Makes upstream cookies storable on `http://localhost`: strips `Domain`, `Secure`, `Partitioned`; rewrites `SameSite=None` → `SameSite=Lax`; strips `__Secure-` / `__Host-` name prefixes. Prevents CSRF failures on Django/Rails login flows. |
 | **Security headers** | CSP, HSTS, X-Frame-Options removed for local dev |
 | **Decompression** | gzip / brotli / deflate handled transparently |
 
@@ -221,6 +221,14 @@ The PID shown should match the current Cursor MCP process. If it belongs to an o
 ### Styles applied but not rendering visually
 
 Call `refresh_theme()` — this cycles the theme off then back on, forcing a full browser style recalculation. Do not ask the user to reload the page.
+
+### CSRF 403 / "cookie not set" errors when logging in
+
+Caused by upstream cookies that require the `Secure` flag (which is invalid on `http://localhost`). The proxy rewrites `Set-Cookie` headers to drop `Secure`/`Partitioned`, downgrade `SameSite=None` → `SameSite=Lax`, and strip `__Secure-` / `__Host-` name prefixes so the browser actually stores the cookie. If a login still 403s:
+
+1. Make sure every auth subdomain the site redirects to is registered with `add_target` — browsers drop cross-site context when they escape the proxy tunnel.
+2. Clear cookies for every `localhost:998x` origin (DevTools → Application → Cookies → right-click → Clear) to flush any cookies from a pre-fix run that Chrome rejected.
+3. Reload MCP servers in Cursor so any `index.js` change is picked up.
 
 ### CSS selectors not matching
 

@@ -242,9 +242,18 @@ function proxyRequest(req, res, entry, port) {
       const cookies = Array.isArray(proxyRes.headers["set-cookie"])
         ? proxyRes.headers["set-cookie"]
         : [proxyRes.headers["set-cookie"]];
-      proxyRes.headers["set-cookie"] = cookies.map((c) =>
-        c.replace(/;\s*domain=[^;]*/gi, "").replace(/;\s*secure/gi, "")
-      );
+      // Rewrite Set-Cookie so the browser actually stores cookies on http://localhost.
+      // HTTPS→http bridging means we must neutralise every attribute or name-prefix
+      // that Chrome refuses to honour on an insecure origin; otherwise the cookie
+      // is silently dropped and Django/Rails/etc. reject the next POST as CSRF.
+      proxyRes.headers["set-cookie"] = cookies.map((c) => {
+        c = c.replace(/;\s*domain=[^;]*/gi, "");
+        c = c.replace(/;\s*secure(?=\s*(?:;|$))/gi, "");
+        c = c.replace(/;\s*partitioned(?=\s*(?:;|$))/gi, "");
+        c = c.replace(/;\s*samesite\s*=\s*none/gi, "; SameSite=Lax");
+        c = c.replace(/^\s*(?:__Secure-|__Host-)/i, "");
+        return c;
+      });
     }
 
     if (ct.includes("text/html") || ct.includes("text/css")) {
@@ -636,7 +645,7 @@ primaryServer.on("error", (e) => {
 
 const mcp = new McpServer({
   name: "stylus-injector",
-  version: "1.0.0",
+  version: "1.1.0",
 });
 
 // ----- start_proxy --------------------------------------------------------
