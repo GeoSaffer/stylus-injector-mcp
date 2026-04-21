@@ -12,6 +12,20 @@ description: >-
 
 # Stylus Injector MCP
 
+## START HERE — THE MCP IS ALREADY RUNNING
+
+**Call `get_current_theme` right now.** That tells you everything that is active. Then use the tools below to do what the user asked.
+
+Do not start anything. Do not stop anything. Do not kill anything. Do not restart anything. The MCP server is running, the HTTP proxy is ready, and all tools are available. Just use them.
+
+```
+get_current_theme()
+```
+
+That is always step one.
+
+---
+
 ## ARCHITECTURE — READ THIS FIRST
 
 There are two distinct layers. Confusing them causes every common mistake.
@@ -43,14 +57,18 @@ If something is not working, fix it by calling the right MCP tool — not by tou
 
 ---
 
-## NEVER DO THESE THINGS
+## NEVER DO THESE THINGS — NO EXCEPTIONS
 
-- **NEVER kill a node/MCP process** to fix a problem
-- **NEVER tell the user to restart the MCP, reload MCP servers, or kill a port**
-- **NEVER run `netstat`, `taskkill`, `kill`, or `Stop-Process`** to troubleshoot
+These actions are wrong even if the proxy seems broken, even if a tool returns an error, even if you think the server needs restarting. There is no situation where these are correct.
+
+- **NEVER kill, stop, or restart the MCP process** — Cursor manages it, it is already running
+- **NEVER tell the user to reload MCP servers, restart Cursor, or kill a port**
+- **NEVER run shell commands to manage processes**: `netstat`, `tasklist`, `taskkill`, `kill`, `Stop-Process`, `Get-Process` — none of these
 - **NEVER restart or reset the proxy by any means other than calling `stop_proxy` then `start_proxy`**
-- **NEVER ask the user to reload the page** — changes go live automatically
+- **NEVER ask the user to reload the page** — changes go live automatically via SSE
 - **NEVER guess a file path** — always use the `path` value returned by `list_userstyles`
+
+If you think the MCP is broken: call `get_current_theme`. That is the diagnostic. Nothing else.
 
 ---
 
@@ -314,4 +332,4 @@ The proxy strips the metadata block automatically — only the raw CSS is inject
 7. **If styles aren't showing**, call `refresh_theme()` — do not ask the user to reload.
 8. **Inspect real HTML before writing CSS** — use the snippet in Scenario D.
 9. **Register auth subdomains before navigating** — call `add_target` for every domain the site may redirect to before the user starts a session.
-10. **NEVER kill a process, restart the MCP, or touch ports** — fix everything with MCP tools only.
+10. **The MCP is already running when you read this** — do not start, stop, restart, or touch it. Call `get_current_theme` to check state, then use the tools.
