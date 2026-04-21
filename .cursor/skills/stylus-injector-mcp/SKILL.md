@@ -12,15 +12,65 @@ description: >-
 
 # Stylus Injector MCP
 
-Reverse proxy on `localhost:9988` — injects `.user.css` themes into every HTML page. Changes hot-swap live via SSE; no page reload needed.
+## ARCHITECTURE — READ THIS FIRST
+
+There are two distinct layers. Confusing them causes every common mistake.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  MCP SERVER PROCESS (stylus-injector)               │
+│  Always running. Cursor manages it. NEVER touch it. │
+│                                                     │
+│  Inside it runs an HTTP server on :9988             │
+│  which acts as the reverse proxy.                   │
+└─────────────────────────────────────────────────────┘
+         ▲
+         │  You talk to it using MCP tools only:
+         │  start_proxy, stop_proxy, switch_theme, etc.
+         ▼
+┌─────────────────────────────────────────────────────┐
+│  HTTP REVERSE PROXY (inside the MCP process)        │
+│  localhost:9988 → your target site                  │
+│  Controlled entirely by the MCP tools below.        │
+│  start_proxy activates it. stop_proxy clears it.    │
+│  The MCP process itself keeps running either way.   │
+└─────────────────────────────────────────────────────┘
+```
+
+**The MCP process is Cursor's responsibility. You do not start it, stop it, restart it, or kill it. Ever.**
+
+If something is not working, fix it by calling the right MCP tool — not by touching processes.
+
+---
+
+## NEVER DO THESE THINGS
+
+- **NEVER kill a node/MCP process** to fix a problem
+- **NEVER tell the user to restart the MCP, reload MCP servers, or kill a port**
+- **NEVER run `netstat`, `taskkill`, `kill`, or `Stop-Process`** to troubleshoot
+- **NEVER restart or reset the proxy by any means other than calling `stop_proxy` then `start_proxy`**
+- **NEVER ask the user to reload the page** — changes go live automatically
+- **NEVER guess a file path** — always use the `path` value returned by `list_userstyles`
+
+---
+
+## When something is wrong — fix it with tools, in this order
+
+1. Call `get_current_theme` — understand what is actually active right now
+2. Call `stop_proxy` — clear all state cleanly
+3. Re-run the workflow: `list_userstyles` → `start_proxy` → `switch_theme`
+4. If styles load but aren't rendering visually: call `refresh_theme`
+5. If a newly edited `.user.css` file isn't applying: call `switch_theme` with the same path again
+
+That is the entire troubleshooting checklist. Do not go further.
 
 ---
 
 ## Scenario A — Set a theme folder, then browse and switch freely
 
-This is the preferred workflow when the user has a folder of themes. Scan the folder once to register it, start the proxy without locking in a theme, then switch freely.
+This is the primary workflow. Scan the folder once, start the proxy, then switch themes freely.
 
-**Step 1: Scan the folder to discover all available themes**
+**Step 1 — Scan the folder**
 
 ```
 list_userstyles({ directory: "C:/Users/dave/themes" })
@@ -36,45 +86,41 @@ Response:
 }
 ```
 
-> **IMPORTANT:** Always use the `path` field — the full absolute path — when passing a theme to any tool. Never use `name` or `file`.
+Always use the `path` field in every subsequent call. Never use `name` or `file`.
 
-Keep the `files` array in memory for this session — you will use `path` values to switch themes.
-
-**Step 2: Start the proxy (no theme required yet)**
+**Step 2 — Start the proxy**
 
 ```
 start_proxy({ target: "https://example.com" })
 ```
 
-`userstyle` is optional. You can start without a theme and apply one after.
+`userstyle` is optional here. You can start without a theme and switch to one after.
 
-**Step 3: Navigate the browser to the proxy**
+**Step 3 — Navigate the browser**
 
-Use the browser tool directly — do not just tell the user:
+Call the browser tool yourself. Do not tell the user to do it.
 
 ```
 browser_navigate({ url: "http://localhost:9988/" })
 ```
 
-**Step 4: Apply any theme from the folder using its `path`**
+**Step 4 — Apply a theme**
 
 ```
 switch_theme({ userstyle: "C:/Users/dave/themes/dark.user.css" })
 ```
 
-**Step 5: Switch to any other theme in the folder at any time**
+**Step 5 — Switch to another theme at any time**
 
 ```
 switch_theme({ userstyle: "C:/Users/dave/themes/blue.user.css" })
 ```
 
-The browser updates **instantly** every time — no reload needed.
+The browser updates instantly every time. No reload needed.
 
 ---
 
 ## Scenario B — Start with a specific theme already loaded
-
-If the user wants a particular theme active from the moment the proxy starts:
 
 ```
 start_proxy({
@@ -83,27 +129,27 @@ start_proxy({
 })
 ```
 
-Still call `list_userstyles` first to get the correct `path` value — never guess it.
+Still call `list_userstyles` first to get the correct `path`.
 
 ---
 
 ## Scenario C — Switch theme while proxy is running
 
-**Step 1: Check what is currently active**
+**Step 1 — Check what is active**
 
 ```
 get_current_theme()
 ```
 
-**Step 2: Switch using the `path` from the earlier `list_userstyles` call**
+**Step 2 — Switch**
 
 ```
 switch_theme({ userstyle: "C:/Users/dave/themes/blue.user.css" })
 ```
 
-The browser updates **instantly** — do not ask the user to reload.
+The browser updates instantly. Do not ask the user to reload.
 
-**Step 3: Clear the theme entirely (optional)**
+**Step 3 — Clear theme entirely (optional)**
 
 ```
 switch_theme({ userstyle: "" })
@@ -113,32 +159,24 @@ switch_theme({ userstyle: "" })
 
 ## Scenario D — Writing CSS for a third-party site
 
-**Always inspect real class names before writing CSS.** Generic selectors like `.card` or `main` rarely exist on third-party sites. Guessing silently does nothing.
+Always inspect real class names before writing CSS. Generic names like `.card` or `main` almost never exist on third-party sites.
 
-After the proxy is running, fetch the proxied HTML and extract real selectors:
+Fetch the proxied HTML and extract selectors:
 
 **macOS / Linux**
 ```bash
-# Body tag
 curl -s "http://localhost:9988/" | grep -oE '<body[^>]*>' | head -1
-
-# Meaningful div class names
 curl -s "http://localhost:9988/" | grep -oE '<div[^>]+class="[^"]{10,60}"' | head -20
 ```
 
 **Windows (PowerShell)**
 ```powershell
 $html = (Invoke-WebRequest "http://localhost:9988/" -UseBasicParsing).Content
-
-# Body tag
 [regex]::Match($html, '<body[^>]*>').Value
-
-# Meaningful div class names
-[regex]::Matches($html, '<div[^>]+class="[^"]{10,60}"') |
-  Select-Object -First 20 | ForEach-Object { $_.Value }
+[regex]::Matches($html, '<div[^>]+class="[^"]{10,60}"') | Select-Object -First 20 | ForEach-Object { $_.Value }
 ```
 
-Write CSS using the real class names found, then apply:
+Write CSS using the real class names found, save the file, then:
 
 ```
 switch_theme({ userstyle: "C:/path/to/your-theme.user.css" })
@@ -150,11 +188,11 @@ switch_theme({ userstyle: "C:/path/to/your-theme.user.css" })
 
 Ask: *"What folder are your `.user.css` theme files in?"*
 
-Once they give the path, run `list_userstyles` with it, then proceed as Scenario A.
+Once they give the path, run `list_userstyles`, then continue as Scenario A.
 
 ---
 
-## Scenario F — Inject one-off CSS without a theme file
+## Scenario F — Inject a one-off CSS snippet without a file
 
 ```
 inject_css({
@@ -163,34 +201,36 @@ inject_css({
 })
 ```
 
-- Reusing the same `id` replaces the previous snippet — good for iterating.
-- Snippets stack **on top of** the theme — they don't replace it.
+- Reuse the same `id` to replace the previous snippet.
+- Snippets stack on top of the active theme, they don't replace it.
 
 ---
 
-## Scenario G — Styles not visually updating
+## Scenario G — Styles not visually applying
+
+Call this. Do not ask the user to reload.
 
 ```
 refresh_theme()
 ```
 
-Cycles the theme off → waits 50 ms → back on. Forces full style recalculation. **Do not ask the user to reload the page.**
+Cycles the theme off → waits 50 ms → back on. Forces full style recalculation.
 
 ---
 
-## Scenario I — Site redirects to a different domain during login
+## Scenario H — Site redirects to a different domain during login
 
-Some sites redirect the browser to an auth subdomain during sign-in (e.g. `accounts.skilljar.com`). Without that subdomain also being proxied, the browser escapes the proxy tunnel when the redirect happens and the theme stops applying.
+Some sites (e.g. Skilljar) redirect to an auth subdomain on login. Without proxying that subdomain too, the browser escapes the proxy tunnel and theming stops.
 
-**Register every domain the site may redirect to before starting your session.**
+Register every domain the site redirects to **before** navigating.
 
-**Step 1: Start the primary proxy**
+**Step 1 — Start the primary proxy**
 
 ```
 start_proxy({ target: "https://skilljar.com" })
 ```
 
-**Step 2: Immediately add the auth subdomain on a new port**
+**Step 2 — Add the auth subdomain immediately**
 
 ```
 add_target({ target: "https://accounts.skilljar.com" })
@@ -205,23 +245,21 @@ All active proxies:
   http://localhost:9989 → https://accounts.skilljar.com
 ```
 
-**Step 3: Navigate the browser to the primary proxy**
+**Step 3 — Navigate**
 
 ```
 browser_navigate({ url: "http://localhost:9988/" })
 ```
 
-When the user clicks "Login", the proxy rewrites the redirect from `https://accounts.skilljar.com/...` to `http://localhost:9989/...`. The browser stays proxied throughout the login flow and returns to `http://localhost:9988` on success.
+Login redirects to `accounts.skilljar.com` are automatically rewritten to `localhost:9989`. The browser stays proxied. All proxies share the same theme.
 
-**All proxies share the same theme** — you only switch themes once.
-
-**Step 4: List active proxies at any time**
+**Step 4 — List active proxies**
 
 ```
 list_targets()
 ```
 
-**Step 5: Remove a target when done (optional)**
+**Step 5 — Remove when done (optional)**
 
 ```
 remove_target({ target: "https://accounts.skilljar.com" })
@@ -229,21 +267,7 @@ remove_target({ target: "https://accounts.skilljar.com" })
 
 ---
 
-## Scenario J — Proxy appears active but CSS is not injecting
-
-A stale Node.js process from a previous session may be holding port `9988`. Check:
-
-```powershell
-netstat -ano | findstr ":9988"
-```
-
-If the PID is from an old process, kill it and reload MCP servers in Cursor (Settings → MCP → Reload on `stylus-injector`).
-
----
-
 ## `.user.css` file format
-
-Every theme file must have a `==UserStyle==` metadata block at the top:
 
 ```css
 /* ==UserStyle==
@@ -258,7 +282,7 @@ Every theme file must have a `==UserStyle==` metadata block at the top:
 body { background: #111 !important; }
 ```
 
-The proxy strips the metadata block automatically — only the raw CSS rules are injected.
+The proxy strips the metadata block automatically — only the raw CSS is injected.
 
 ---
 
@@ -266,28 +290,28 @@ The proxy strips the metadata block automatically — only the raw CSS rules are
 
 | Tool | Required params | Notes |
 |---|---|---|
-| `list_userstyles` | `directory` | Scans folder, registers it as the active theme folder, returns `{ file, path, name, version }` per theme. Always use `path` in subsequent calls. Call this before `start_proxy` to discover themes you can switch between freely. |
-| `start_proxy` | `target` | `target` = full origin e.g. `https://example.com`. `userstyle` is **optional** — omit it to start without a theme and apply one later via `switch_theme`. |
-| `add_target` | `target` | Add another domain on its own port (auto-assigned from 9989+). All proxies share the same theme. Use for auth subdomains and any domain the site redirects to. Optional `port` to specify explicitly. |
+| `list_userstyles` | `directory` | Scan folder for `.user.css` files. Returns `{ file, path, name, version }` per theme. Always call first. Always use `path` in subsequent calls. |
+| `start_proxy` | `target` | Full origin e.g. `https://example.com`. `userstyle` optional. |
+| `add_target` | `target` | Add another domain on its own auto-assigned port (9989+). All proxies share the same theme. Use for auth subdomains. |
 | `remove_target` | `port` or `target` | Remove a proxy target by port number or origin URL. |
-| `list_targets` | — | List all active proxy targets with their ports and local URLs. |
-| `switch_theme` | `userstyle` | Absolute path to `.user.css`, or `""` to clear. Hot-swaps live across all proxies. |
-| `refresh_theme` | — | Force re-render. Use when styles aren't applying visually. |
-| `inject_css` | `css` | Raw CSS string. Optional `id` to replace a previous snippet. |
-| `get_current_theme` | — | Returns active theme name + file path + all proxy targets. Always call before switching. |
-| `stop_proxy` | — | Stops all proxies. Panel stays up at `/__panel__`. |
+| `list_targets` | — | List all active proxy targets. |
+| `switch_theme` | `userstyle` | Absolute path to `.user.css`, or `""` to clear. Hot-swaps live. |
+| `refresh_theme` | — | Force re-render when styles aren't applying visually. |
+| `inject_css` | `css` | Raw CSS snippet on top of the active theme. Optional `id` to replace. |
+| `get_current_theme` | — | Returns active theme name, file path, and all proxy targets. |
+| `stop_proxy` | — | Stop all proxies and clear state. MCP server keeps running. |
 
 ---
 
 ## Rules
 
-1. **Always call `list_userstyles` first** — it registers the folder AND gives you the `path` values needed for all other calls.
-2. **Always use `path`** from `list_userstyles` results — never guess or hardcode a file path.
-3. **`userstyle` is optional in `start_proxy`** — prefer starting without it and using `switch_theme` to apply themes from the scanned folder.
-4. **Always call `get_current_theme`** before switching so you know the current state.
-5. **If you don't know the theme directory**, ask the user before calling any tool.
-6. **Navigate the browser yourself** using `browser_navigate({ url: "http://localhost:9988/" })` — do not just tell the user to do it.
-7. **After `switch_theme` or `inject_css` the change is already live** — do not ask the user to reload.
-8. **If styles aren't showing**, call `refresh_theme()` — do not ask the user to reload.
-9. **Inspect real HTML before writing CSS** — use the platform snippet in Scenario D to find actual class names.
-10. **Register auth subdomains before navigating** — if the site redirects to a different domain during login, call `add_target` with that domain immediately after `start_proxy`, before the user navigates or logs in. Failing to do this causes the browser to escape the proxy tunnel.
+1. **Call `list_userstyles` first** — always, to get the correct `path` values.
+2. **Always use `path`** from `list_userstyles` — never guess or hardcode.
+3. **`userstyle` is optional in `start_proxy`** — start without a theme, apply one later via `switch_theme`.
+4. **Call `get_current_theme` before switching** — know what is active.
+5. **Navigate the browser yourself** with `browser_navigate({ url: "http://localhost:9988/" })` — do not tell the user to do it.
+6. **After `switch_theme` or `inject_css` the change is live** — do not ask the user to reload.
+7. **If styles aren't showing**, call `refresh_theme()` — do not ask the user to reload.
+8. **Inspect real HTML before writing CSS** — use the snippet in Scenario D.
+9. **Register auth subdomains before navigating** — call `add_target` for every domain the site may redirect to before the user starts a session.
+10. **NEVER kill a process, restart the MCP, or touch ports** — fix everything with MCP tools only.
