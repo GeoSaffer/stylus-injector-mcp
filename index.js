@@ -27,6 +27,7 @@ const PORT = parseInt(process.env.STYLUS_PORT || "9988", 10);
 // The primary server on PORT is always in this map (origin may be null = panel-only mode).
 // Additional servers (PORT+1, PORT+2, …) are added on demand via add_target.
 const targets = new Map();
+const blockedPorts = new Set(); // ports occupied externally (EADDRINUSE on bind attempt)
 
 let themeCSS = "";
 let themeName = "";
@@ -61,9 +62,9 @@ function getActiveTargets() {
     .map(([port, e]) => ({ port, origin: e.origin, url: `http://localhost:${port}` }));
 }
 
-function nextAvailablePort() {
-  let p = PORT + 1;
-  while (targets.has(p)) p++;
+function nextAvailablePort(startFrom = PORT + 1) {
+  let p = startFrom;
+  while (targets.has(p) || blockedPorts.has(p)) p++;
   return p;
 }
 
@@ -540,27 +541,43 @@ function createProxyServer(port) {
 }
 
 async function addTargetOrigin(origin, portArg) {
-  const assignedPort = portArg || nextAvailablePort();
+  const maxAttempts = portArg ? 1 : 10;
 
-  if (!targets.has(assignedPort)) {
-    const server = createProxyServer(assignedPort);
-    await new Promise((resolve, reject) => {
-      server.once("error", (e) => {
-        targets.delete(assignedPort);
-        reject(e);
-      });
-      server.listen(assignedPort, () => {
-        server.on("error", (e) => {
-          process.stderr.write(`[stylus-injector] Server error (port ${assignedPort}): ${e.message}\n`);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const port = portArg || nextAvailablePort(PORT + 1);
+
+    if (!targets.has(port)) {
+      const server = createProxyServer(port);
+      try {
+        await new Promise((resolve, reject) => {
+          server.once("error", (e) => {
+            targets.delete(port);
+            reject(e);
+          });
+          server.listen(port, () => {
+            server.on("error", (e) => {
+              process.stderr.write(`[stylus-injector] Server error (port ${port}): ${e.message}\n`);
+            });
+            resolve();
+          });
         });
-        resolve();
-      });
-    });
+      } catch (e) {
+        if (e.code === "EADDRINUSE" && !portArg) {
+          // Port occupied externally — remember it so nextAvailablePort skips it
+          blockedPorts.add(port);
+          process.stderr.write(`[stylus-injector] Port ${port} busy externally, trying next…\n`);
+          continue;
+        }
+        throw e;
+      }
+    }
+
+    setTargetForPort(port, origin);
+    process.stderr.write(`[stylus-injector] Target added: http://localhost:${port} → ${origin}\n`);
+    return port;
   }
 
-  setTargetForPort(assignedPort, origin);
-  process.stderr.write(`[stylus-injector] Target added: http://localhost:${assignedPort} → ${origin}\n`);
-  return assignedPort;
+  throw new Error(`No available port found after ${maxAttempts} attempts (starting from ${PORT + 1})`);
 }
 
 async function removeTargetPort(port) {
